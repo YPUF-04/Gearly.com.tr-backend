@@ -1,6 +1,5 @@
 // =============================================
-// GameVault Backend — Node.js / Express
-// Gmail'den Steam kodunu otomatik çeker
+// GameVault Backend — Tam Sürüm
 // =============================================
 
 const express = require("express");
@@ -11,26 +10,30 @@ const fs = require("fs");
 const path = require("path");
 
 const app = express();
-app.use(cors());
+
+// CORS Ayarları - Frontend'in bağlanabilmesi için kritik
+app.use(cors({
+  origin: "*",
+  methods: ["GET", "POST"],
+  allowedHeaders: ["Content-Type"]
+}));
+
 app.use(express.json());
-app.use(express.static(path.join(__dirname, "../frontend")));
 
-// =============================================
-// AYARLAR — .env dosyana yaz
-// =============================================
-const GMAIL_USER = process.env.GMAIL_USER;       // ornek@gmail.com
-const GMAIL_PASS = process.env.GMAIL_PASS;       // Gmail uygulama şifresi
+// Ayarlar
 const PORT = process.env.PORT || 3000;
-
-// =============================================
-// VERİTABANI (JSON dosyası — basit, çalışır)
-// Gerçek kullanımda MongoDB/Supabase önerilir
-// =============================================
 const DB_FILE = path.join(__dirname, "db.json");
 
+// =============================================
+// VERİTABANI YÖNETİMİ
+// =============================================
 function loadDB() {
   if (!fs.existsSync(DB_FILE)) {
-    fs.writeFileSync(DB_FILE, JSON.stringify({ codes: {}, usedSteamCodes: [] }));
+    fs.writeFileSync(DB_FILE, JSON.stringify({ 
+      codes: {}, 
+      games: [], 
+      usedSteamCodes: [] 
+    }));
   }
   return JSON.parse(fs.readFileSync(DB_FILE));
 }
@@ -40,115 +43,142 @@ function saveDB(db) {
 }
 
 // =============================================
-// KOD EKLE (manuel — admin için)
-// POST /api/admin/add-code
-// Body: { adminKey, code, balance }
+// ADMIN: OYUN / ÜRÜN EKLEME
+// =============================================
+app.post("/api/admin/add-game", (req, res) => {
+  const { adminKey, gameName, steamUser, steamPass, gmailUser, gmailPass } = req.body;
+  
+  if (adminKey !== process.env.ADMIN_KEY) {
+    return res.json({ success: false, message: "Yetkisiz admin girişi." });
+  }
+
+  const db = loadDB();
+  const newGame = {
+    id: Date.now().toString(),
+    name: gameName,
+    steamUser: steamUser,
+    steamPass: steamPass,
+    gmailUser: gmailUser,
+    gmailPass: gmailPass, // Uygulama şifresi olmalı
+    emoji: "🎮",
+    platform: "PC / Steam"
+  };
+
+  db.games.push(newGame);
+  saveDB(db);
+  res.json({ success: true, message: "Oyun ve hesap bilgileri başarıyla eklendi." });
+});
+
+// =============================================
+// ADMIN: ERİŞİM KODU OLUŞTURMA
 // =============================================
 app.post("/api/admin/add-code", (req, res) => {
   const { adminKey, code, balance } = req.body;
   if (adminKey !== process.env.ADMIN_KEY) {
     return res.json({ success: false, message: "Yetkisiz." });
   }
+  
   const db = loadDB();
-  db.codes[code.toUpperCase()] = { balance: balance || 1, used: false, selectedGame: null };
+  db.codes[code.toUpperCase()] = { 
+    balance: balance || 1, 
+    used: false, 
+    selectedGame: null 
+  };
   saveDB(db);
-  res.json({ success: true, message: "Kod eklendi." });
+  res.json({ success: true, message: "Erişim kodu oluşturuldu." });
 });
 
 // =============================================
-// KODLARI LİSTELE (admin)
-// GET /api/admin/codes?adminKey=xxx
+// KULLANICI: OYUNLARI LİSTELE
 // =============================================
-app.get("/api/admin/codes", (req, res) => {
-  if (req.query.adminKey !== process.env.ADMIN_KEY) {
-    return res.json({ success: false, message: "Yetkisiz." });
-  }
+app.get("/api/games", (req, res) => {
   const db = loadDB();
-  res.json({ success: true, codes: db.codes });
+  // Güvenlik için Gmail şifrelerini listede göndermiyoruz
+  const safeGames = db.games.map(({ gmailPass, ...rest }) => rest);
+  res.json({ success: true, games: safeGames });
 });
 
 // =============================================
-// KOD DOĞRULA
-// POST /api/validate-code
-// Body: { code }
+// KULLANICI: KOD DOĞRULAMA
 // =============================================
 app.post("/api/validate-code", (req, res) => {
   const { code } = req.body;
-  if (!code) return res.json({ success: false, message: "Kod gerekli." });
-
   const db = loadDB();
-  const entry = db.codes[code.toUpperCase()];
+  const entry = db.codes[code?.toUpperCase()];
 
   if (!entry) return res.json({ success: false, message: "Geçersiz kod." });
-  if (entry.balance <= 0) return res.json({ success: false, message: "Bu kod daha önce kullanılmış." });
+  if (entry.balance <= 0) return res.json({ success: false, message: "Bakiye yetersiz." });
 
-  res.json({ success: true, balance: entry.balance, selectedGame: entry.selectedGame });
+  res.json({ success: true, balance: entry.balance });
 });
 
 // =============================================
-// OYUN SEÇ
-// POST /api/select-game
-// Body: { code, gameId }
+// KULLANICI: OYUN SEÇİMİ
 // =============================================
 app.post("/api/select-game", (req, res) => {
   const { code, gameId } = req.body;
-  if (!code || !gameId) return res.json({ success: false, message: "Eksik parametre." });
-
   const db = loadDB();
-  const entry = db.codes[code.toUpperCase()];
+  const entry = db.codes[code?.toUpperCase()];
 
-  if (!entry) return res.json({ success: false, message: "Geçersiz kod." });
-  if (entry.balance <= 0) return res.json({ success: false, message: "Bakiye yok." });
+  if (!entry || entry.balance <= 0) {
+    return res.json({ success: false, message: "İşlem geçersiz." });
+  }
 
   entry.selectedGame = gameId;
   saveDB(db);
-
   res.json({ success: true, message: "Oyun seçildi." });
 });
 
 // =============================================
-// STEAM KODU AL — Gmail'den çeker
-// POST /api/get-steam-code
-// Body: { code, gameId }
+// KULLANICI: STEAM KODUNU ÇEK (GMAİL BAĞLANTISI)
 // =============================================
 app.post("/api/get-steam-code", async (req, res) => {
   const { code, gameId } = req.body;
-  if (!code) return res.json({ success: false, message: "Kod gerekli." });
-
   const db = loadDB();
-  const entry = db.codes[code.toUpperCase()];
+  const entry = db.codes[code?.toUpperCase()];
+  const game = db.games.find(g => g.id === gameId);
 
-  if (!entry) return res.json({ success: false, message: "Geçersiz kod." });
-  if (entry.balance <= 0) return res.json({ success: false, message: "Bakiye yok." });
+  if (!entry || !game) return res.json({ success: false, message: "Kayıt bulunamadı." });
+  if (entry.balance <= 0) return res.json({ success: false, message: "Bakiye bitmiş." });
 
   try {
-    const steamCode = await fetchSteamCodeFromGmail(gameId);
+    // Oyuna özel tanımlanmış Gmail bilgilerini kullanıyoruz
+    const steamCode = await fetchSteamCodeFromGmail(game.gmailUser, game.gmailPass);
 
     if (!steamCode) {
-      return res.json({ success: false, message: "Steam kodu henüz gelmedi. Birkaç dakika bekle ve tekrar dene." });
+      return res.json({ success: false, message: "Kod henüz mail kutusuna düşmedi. Lütfen 30 saniye sonra tekrar deneyin." });
     }
 
-    // Bakiyeyi düş
+    // Başarılı ise bakiyeyi düş
     entry.balance -= 1;
-    entry.selectedGame = gameId;
-    db.usedSteamCodes.push({ code, gameId, steamCode, date: new Date().toISOString() });
+    db.usedSteamCodes.push({ 
+      userCode: code, 
+      game: game.name, 
+      steamCode, 
+      date: new Date().toISOString() 
+    });
     saveDB(db);
 
-    res.json({ success: true, steamCode });
+    res.json({ 
+      success: true, 
+      steamCode,
+      steamUser: game.steamUser,
+      steamPass: game.steamPass
+    });
   } catch (err) {
     console.error("Gmail hatası:", err);
-    res.json({ success: false, message: "Mail sunucusuna bağlanılamadı." });
+    res.json({ success: false, message: "Mail sunucusuna bağlanılamadı. Ayarları kontrol edin." });
   }
 });
 
 // =============================================
-// GMAİL'DEN STEAM KODU ÇEK
+// GMAİL OKUMA FONKSİYONU
 // =============================================
-function fetchSteamCodeFromGmail(gameId) {
+function fetchSteamCodeFromGmail(user, pass) {
   return new Promise((resolve, reject) => {
     const imap = new Imap({
-      user: GMAIL_USER,
-      password: GMAIL_PASS,
+      user: user,
+      password: pass,
       host: "imap.gmail.com",
       port: 993,
       tls: true,
@@ -156,70 +186,44 @@ function fetchSteamCodeFromGmail(gameId) {
     });
 
     imap.once("error", reject);
-
     imap.once("ready", () => {
       imap.openBox("INBOX", false, (err) => {
         if (err) { imap.end(); return reject(err); }
 
-        // Son 24 saatte gelen Steam maillerini ara
         const since = new Date();
-        since.setDate(since.getDate() - 1);
+        since.setMinutes(since.getMinutes() - 10); // Son 10 dakikadaki mailler
 
-        imap.search(
-          ["UNSEEN", ["FROM", "noreply@steampowered.com"], ["SINCE", since]],
-          (err, results) => {
-            if (err || !results || results.length === 0) {
-              imap.end();
-              return resolve(null);
-            }
+        imap.search(["UNSEEN", ["FROM", "noreply@steampowered.com"], ["SINCE", since]], (err, results) => {
+          if (err || !results || results.length === 0) {
+            imap.end();
+            return resolve(null);
+          }
 
-            // En son maili al
-            const latest = results[results.length - 1];
-            const fetch = imap.fetch(latest, { bodies: "" });
-            let found = null;
+          const f = imap.fetch(results[results.length - 1], { bodies: "" });
+          let foundCode = null;
 
-            fetch.on("message", (msg) => {
-              msg.on("body", (stream) => {
-                simpleParser(stream, (err, parsed) => {
-                  if (err) return;
-                  const text = (parsed.text || "") + (parsed.html || "");
-
-                  // Steam doğrulama kodu — genellikle 5 haneli sayı
-                  // veya XXXXX-XXXXX-XXXXX formatında CD key
-                  const codeMatch =
-                    text.match(/\b([A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5})\b/) ||
-                    text.match(/doğrulama kodu[:\s]+([A-Z0-9]{5})/i) ||
-                    text.match(/verification code[:\s]+([A-Z0-9]{5})/i) ||
-                    text.match(/\b(\d{5})\b/);
-
-                  if (codeMatch) found = codeMatch[1];
-                });
+          f.on("message", (msg) => {
+            msg.on("body", (stream) => {
+              simpleParser(stream, (err, parsed) => {
+                const content = (parsed.text || "") + (parsed.html || "");
+                // Steam Guard kodu (5 haneli sayı veya harf kombinasyonu)
+                const match = content.match(/\b([A-Z0-9]{5})\b/);
+                if (match) foundCode = match[1];
               });
             });
+          });
 
-            fetch.once("end", () => {
-              // Maili okundu olarak işaretle
-              imap.setFlags([latest], ["\\Seen"], () => {});
-              imap.end();
-              setTimeout(() => resolve(found), 500);
-            });
-
-            fetch.once("error", (e) => {
-              imap.end();
-              reject(e);
-            });
-          }
-        );
+          f.once("end", () => {
+            imap.end();
+            setTimeout(() => resolve(foundCode), 1000);
+          });
+        });
       });
     });
-
     imap.connect();
   });
 }
 
-// =============================================
-// SUNUCUYU BAŞLAT
-// =============================================
 app.listen(PORT, () => {
-  console.log(`✅ GameVault çalışıyor: http://localhost:${PORT}`);
+  console.log(`✅ Sunucu aktif: Port ${PORT}`);
 });
