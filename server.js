@@ -65,10 +65,17 @@ function adminCheck(key) { return key === process.env.ADMIN_KEY; }
 // ─────────────────────────────────────────────
 app.get("/api/stats", (req, res) => {
   const db = loadDB();
-  const s  = db.siteStats;
+  const s = db.siteStats;
   const hoursPassed = (Date.now() - new Date(s.baseUserDate).getTime()) / 3600000;
-  const currentUsers = Math.floor(s.baseUserCount + hoursPassed * 0.3);
-  res.json({ success: true, userCount: currentUsers, gameCount: db.games.length, rating: s.rating, serverStatus: "online" });
+  const currentUsers = Math.floor(s.baseUserCount + (hoursPassed * 0.3)); // Saatte ~0.3 kullanıcı artışı
+  
+  res.json({
+    success: true,
+    userCount: currentUsers,
+    gameCount: db.games.length,
+    rating: s.rating,
+    serverStatus: "online"
+  });
 });
 
 // ─────────────────────────────────────────────
@@ -143,25 +150,20 @@ app.post("/api/login", (req, res) => {
 // ─────────────────────────────────────────────
 app.post("/api/send-password-otp", async (req, res) => {
   const { username } = req.body;
-  const db   = loadDB();
+  const db = loadDB();
   const user = db.users[username?.toLowerCase()];
   if (!user) return res.json({ success: false, message: "Kullanıcı bulunamadı." });
 
-  const otp = makeOTP();
+  const otp = Math.floor(100000 + Math.random() * 900000).toString();
   db.passwordResetTokens[username.toLowerCase()] = { otp, createdAt: Date.now() };
   saveDB(db);
 
   try {
     await getMailer().sendMail({
-      from: `"GameVault" <${process.env.SITE_MAIL}>`,
+      from: `"AşkımÇokPardon" <${process.env.SITE_MAIL}>`,
       to: user.email,
-      subject: "GameVault — Şifre Sıfırlama Kodu",
-      html: `<div style="font-family:sans-serif;max-width:480px;margin:auto;padding:32px;background:#0b0e1a;color:#e4eaff;border-radius:16px;border:1px solid #1e2540;">
-        <h2 style="color:#00d4ff;">⬡ GameVault</h2>
-        <p>Şifre sıfırlama kodun:</p>
-        <div style="font-size:40px;font-weight:900;letter-spacing:10px;color:#00e87a;text-align:center;margin:24px 0;padding:16px;background:#06080f;border-radius:12px;">${otp}</div>
-        <p style="color:#6b7899;font-size:12px;">Kod 10 dakika geçerlidir.</p>
-      </div>`
+      subject: "Şifre Sıfırlama Kodu",
+      html: `<b>Kodunuz: ${otp}</b><p>Bu kod 10 dakika geçerlidir.</p>`
     });
     res.json({ success: true, maskedEmail: user.email.replace(/(.{2}).+(@.+)/, "$1***$2") });
   } catch (e) {
