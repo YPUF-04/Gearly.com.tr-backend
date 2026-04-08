@@ -1,7 +1,7 @@
 {
   "name": "gamevault-backend",
-  "version": "2.0.0",
-  "description": "GameVault Dijital Oyun Mağazası Backend",
+  "version": "3.0.0",
+  "description": "GameVault Backend v3",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -12,7 +12,8 @@
     "express": "^4.18.2",
     "imap": "^0.8.19",
     "mailparser": "^3.6.5",
-    "multer": "^1.4.5-lts.1"
+    "multer": "^1.4.5-lts.1",
+    "nodemailer": "^6.9.7"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
