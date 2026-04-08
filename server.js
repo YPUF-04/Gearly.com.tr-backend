@@ -1,20 +1,20 @@
 // =============================================
-// GameVault Backend — v3.0
+// AşkımÇokPardon Backend — v4.0
 // =============================================
-const express = require("express");
-const cors    = require("cors");
-const Imap    = require("imap");
+const express  = require("express");
+const cors     = require("cors");
+const Imap     = require("imap");
 const { simpleParser } = require("mailparser");
 const nodemailer = require("nodemailer");
 const fs   = require("fs");
 const path = require("path");
 const multer = require("multer");
-const crypto = require("crypto");
 
 const app = express();
 app.use(cors({ origin: "*", methods: ["GET","POST","PUT","DELETE"], allowedHeaders: ["Content-Type"] }));
 app.use(express.json({ limit: "10mb" }));
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+app.use(express.static(__dirname)); // serve index.html etc.
 
 const PORT       = process.env.PORT || 3000;
 const DB_FILE    = path.join(__dirname, "db.json");
@@ -41,7 +41,7 @@ function loadDB() {
   if (!fs.existsSync(DB_FILE)) {
     fs.writeFileSync(DB_FILE, JSON.stringify({
       codes: {}, games: [], users: {}, purchases: [],
-      supportTickets: [], extraCodeRequests: [],
+      supportTickets: [], extraCodeRequests: [], suggestions: [],
       siteStats: { rating: 5, baseUserCount: 137, baseUserDate: new Date().toISOString() },
       pendingVerifications: {}, passwordResetTokens: {}
     }));
@@ -49,6 +49,7 @@ function loadDB() {
   const d = JSON.parse(fs.readFileSync(DB_FILE));
   if (!d.supportTickets)       d.supportTickets = [];
   if (!d.extraCodeRequests)    d.extraCodeRequests = [];
+  if (!d.suggestions)          d.suggestions = [];
   if (!d.siteStats)            d.siteStats = { rating: 5, baseUserCount: 137, baseUserDate: new Date().toISOString() };
   if (!d.pendingVerifications) d.pendingVerifications = {};
   if (!d.passwordResetTokens)  d.passwordResetTokens = {};
@@ -67,15 +68,8 @@ app.get("/api/stats", (req, res) => {
   const db = loadDB();
   const s = db.siteStats;
   const hoursPassed = (Date.now() - new Date(s.baseUserDate).getTime()) / 3600000;
-  const currentUsers = Math.floor(s.baseUserCount + (hoursPassed * 0.3)); // Saatte ~0.3 kullanıcı artışı
-  
-  res.json({
-    success: true,
-    userCount: currentUsers,
-    gameCount: db.games.length,
-    rating: s.rating,
-    serverStatus: "online"
-  });
+  const currentUsers = Math.floor(s.baseUserCount + (hoursPassed * 0.3));
+  res.json({ success: true, userCount: currentUsers, gameCount: db.games.length, rating: s.rating, serverStatus: "online" });
 });
 
 // ─────────────────────────────────────────────
@@ -96,11 +90,11 @@ app.post("/api/send-register-otp", async (req, res) => {
 
   try {
     await getMailer().sendMail({
-      from: `"GameVault" <${process.env.SITE_MAIL}>`,
+      from: `"AşkımÇokPardon" <${process.env.SITE_MAIL}>`,
       to: email,
-      subject: "GameVault — Kayıt Doğrulama Kodu",
+      subject: "AşkımÇokPardon — Kayıt Doğrulama Kodu",
       html: `<div style="font-family:sans-serif;max-width:480px;margin:auto;padding:32px;background:#0b0e1a;color:#e4eaff;border-radius:16px;border:1px solid #1e2540;">
-        <h2 style="color:#00d4ff;margin-bottom:8px;">⬡ GameVault</h2>
+        <h2 style="color:#00d4ff;margin-bottom:8px;">♦ AşkımÇokPardon</h2>
         <p>Merhaba <strong>${username}</strong>, kayıt doğrulama kodun:</p>
         <div style="font-size:40px;font-weight:900;letter-spacing:10px;color:#00d4ff;text-align:center;margin:24px 0;padding:16px;background:#06080f;border-radius:12px;">${otp}</div>
         <p style="color:#6b7899;font-size:12px;">Kod 10 dakika geçerlidir. Bu işlemi siz başlatmadıysanız dikkate almayın.</p>
@@ -129,6 +123,7 @@ app.post("/api/register", (req, res) => {
 
   db.users[key] = { username, password, email: email.toLowerCase(), balance: 0, createdAt: new Date().toISOString() };
   delete db.pendingVerifications[email.toLowerCase()];
+  if (db.siteStats) db.siteStats.baseUserCount = (db.siteStats.baseUserCount || 137) + 1;
   saveDB(db);
   res.json({ success: true });
 });
@@ -146,7 +141,7 @@ app.post("/api/login", (req, res) => {
 });
 
 // ─────────────────────────────────────────────
-// ŞİFRE SIFIRLAMA
+// ŞİFRE SIFIRLAMA (sadece şifremi unuttum için OTP)
 // ─────────────────────────────────────────────
 app.post("/api/send-password-otp", async (req, res) => {
   const { username } = req.body;
@@ -154,7 +149,7 @@ app.post("/api/send-password-otp", async (req, res) => {
   const user = db.users[username?.toLowerCase()];
   if (!user) return res.json({ success: false, message: "Kullanıcı bulunamadı." });
 
-  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  const otp = makeOTP();
   db.passwordResetTokens[username.toLowerCase()] = { otp, createdAt: Date.now() };
   saveDB(db);
 
@@ -162,8 +157,13 @@ app.post("/api/send-password-otp", async (req, res) => {
     await getMailer().sendMail({
       from: `"AşkımÇokPardon" <${process.env.SITE_MAIL}>`,
       to: user.email,
-      subject: "Şifre Sıfırlama Kodu",
-      html: `<b>Kodunuz: ${otp}</b><p>Bu kod 10 dakika geçerlidir.</p>`
+      subject: "AşkımÇokPardon — Şifre Sıfırlama Kodu",
+      html: `<div style="font-family:sans-serif;max-width:480px;margin:auto;padding:32px;background:#0b0e1a;color:#e4eaff;border-radius:16px;border:1px solid #1e2540;">
+        <h2 style="color:#ff6b6b;margin-bottom:8px;">♦ AşkımÇokPardon</h2>
+        <p>Merhaba <strong>${user.username}</strong>, şifre sıfırlama kodun:</p>
+        <div style="font-size:40px;font-weight:900;letter-spacing:10px;color:#ff6b6b;text-align:center;margin:24px 0;padding:16px;background:#06080f;border-radius:12px;">${otp}</div>
+        <p style="color:#6b7899;font-size:12px;">Kod 10 dakika geçerlidir. Bu işlemi siz başlatmadıysanız şifreniz güvende, dikkate almayın.</p>
+      </div>`
     });
     res.json({ success: true, maskedEmail: user.email.replace(/(.{2}).+(@.+)/, "$1***$2") });
   } catch (e) {
@@ -248,7 +248,7 @@ app.get("/api/my-purchases", (req, res) => {
 });
 
 // ─────────────────────────────────────────────
-// SON ALIMLAR (bildirim)
+// SON ALIMLAR (bildirim + sol alt köşe)
 // ─────────────────────────────────────────────
 app.get("/api/recent-purchases", (req, res) => {
   const db = loadDB();
@@ -256,6 +256,20 @@ app.get("/api/recent-purchases", (req, res) => {
     username: p.username, gameName: p.gameName, gameEmoji: p.gameEmoji, purchasedAt: p.purchasedAt
   }));
   res.json({ success: true, purchases: recent });
+});
+
+// ─────────────────────────────────────────────
+// LİDERBOARD (public)
+// ─────────────────────────────────────────────
+app.get("/api/leaderboard", (req, res) => {
+  const db = loadDB();
+  const counts = {};
+  db.purchases.forEach(p => { counts[p.username] = (counts[p.username] || 0) + 1; });
+  const leaderboard = Object.entries(counts)
+    .map(([username, count]) => ({ username, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 10);
+  res.json({ success: true, leaderboard });
 });
 
 // ─────────────────────────────────────────────
@@ -301,6 +315,12 @@ app.post("/api/support/send", (req, res) => {
   const { username, message, type } = req.body;
   if (!username || !message) return res.json({ success: false, message: "Eksik bilgi." });
   const db = loadDB();
+  if (type === "suggestion") {
+    db.suggestions = db.suggestions || [];
+    db.suggestions.push({ id: Date.now().toString(), username, message, createdAt: new Date().toISOString(), status: "open", adminReply: null });
+    saveDB(db);
+    return res.json({ success: true });
+  }
   const ticket = { id: Date.now().toString(), username, message, type: type || "chat", createdAt: new Date().toISOString(), status: "open", adminReply: null };
   db.supportTickets.push(ticket);
   saveDB(db);
@@ -314,7 +334,29 @@ app.get("/api/support/my-tickets", (req, res) => {
 });
 
 // ─────────────────────────────────────────────
-// ADMIN
+// ADMIN — DB Yedek / Yükleme
+// ─────────────────────────────────────────────
+app.post("/api/admin/export-db", (req, res) => {
+  if (!adminCheck(req.body.adminKey)) return res.status(403).json({ success: false });
+  res.download(DB_FILE, "askimcokpardon_db.json");
+});
+
+app.post("/api/admin/export-uploads", (req, res) => {
+  if (!adminCheck(req.body.adminKey)) return res.status(403).json({ success: false });
+  const { execSync } = require("child_process");
+  const zipPath = path.join(__dirname, "uploads_export.zip");
+  try {
+    execSync(`cd "${__dirname}" && zip -r uploads_export.zip uploads/`);
+    res.download(zipPath, "uploads.zip", () => {
+      try { fs.unlinkSync(zipPath); } catch(e) {}
+    });
+  } catch(e) {
+    res.json({ success: false, message: "Zip oluşturulamadı." });
+  }
+});
+
+// ─────────────────────────────────────────────
+// ADMIN — Oyun CRUD
 // ─────────────────────────────────────────────
 app.post("/api/admin/get-games",     (req, res) => { if (!adminCheck(req.body.adminKey)) return res.json({success:false}); res.json({success:true,games:loadDB().games}); });
 app.post("/api/admin/add-game",      upload.single("image"), (req, res) => {
@@ -339,45 +381,56 @@ app.post("/api/admin/delete-game",   (req, res) => {
   if (!adminCheck(req.body.adminKey)) return res.json({success:false});
   const db=loadDB(); db.games=db.games.filter(g=>g.id!==req.body.gameId); saveDB(db); res.json({success:true});
 });
-app.post("/api/admin/add-code",      (req, res) => {
+
+// ─────────────────────────────────────────────
+// ADMIN — Kod / Kullanıcı / Satış / Liderlik
+// ─────────────────────────────────────────────
+app.post("/api/admin/add-code",       (req, res) => {
   if (!adminCheck(req.body.adminKey)) return res.json({success:false});
   const db=loadDB(); db.codes[req.body.code.toUpperCase()]={balance:req.body.balance||1,redeemedBy:null,redeemedAt:null,createdAt:new Date().toISOString()};
   saveDB(db); res.json({success:true});
 });
-app.post("/api/admin/get-codes",     (req, res) => { if (!adminCheck(req.body.adminKey)) return res.json({success:false}); const db=loadDB(); res.json({success:true,codes:Object.entries(db.codes).map(([code,d])=>({code,...d}))}); });
-app.post("/api/admin/get-users",     (req, res) => {
+app.post("/api/admin/get-codes",      (req, res) => { if (!adminCheck(req.body.adminKey)) return res.json({success:false}); const db=loadDB(); res.json({success:true,codes:Object.entries(db.codes).map(([code,d])=>({code,...d}))}); });
+app.post("/api/admin/get-users",      (req, res) => {
   if (!adminCheck(req.body.adminKey)) return res.json({success:false});
   const db=loadDB(); let users=Object.values(db.users).map(u=>({username:u.username,email:u.email,balance:u.balance,createdAt:u.createdAt}));
   if(req.body.search) users=users.filter(u=>u.username.toLowerCase().includes(req.body.search.toLowerCase()));
   res.json({success:true,users});
 });
-app.post("/api/admin/update-balance",(req, res) => {
+app.post("/api/admin/update-balance", (req, res) => {
   if (!adminCheck(req.body.adminKey)) return res.json({success:false});
   const db=loadDB(); const u=db.users[req.body.username?.toLowerCase()];
   if(!u) return res.json({success:false,message:"Kullanıcı bulunamadı."});
   u.balance=parseInt(req.body.balance); saveDB(db); res.json({success:true});
 });
-app.post("/api/admin/get-purchases", (req, res) => {
+app.post("/api/admin/get-purchases",  (req, res) => {
   if (!adminCheck(req.body.adminKey)) return res.json({success:false});
   const db=loadDB(); res.json({success:true,purchases:db.purchases.map(p=>({id:p.id,username:p.username,gameName:p.gameName,purchasedAt:p.purchasedAt,steamCodeRequests:p.steamCodeRequests||0}))});
 });
-app.post("/api/admin/get-leaderboard",(req,res)=>{
+app.post("/api/admin/get-leaderboard",(req,res) => {
   if (!adminCheck(req.body.adminKey)) return res.json({success:false});
   const db=loadDB(); const counts={};
   db.purchases.forEach(p=>{counts[p.username]=(counts[p.username]||0)+1;});
   res.json({success:true,leaderboard:Object.entries(counts).map(([u,c])=>({username:u,count:c})).sort((a,b)=>b.count-a.count)});
 });
-app.post("/api/admin/get-support",   (req, res) => {
+app.post("/api/admin/get-support",    (req, res) => {
   if (!adminCheck(req.body.adminKey)) return res.json({success:false});
-  const db=loadDB(); res.json({success:true,tickets:db.supportTickets,extraCodeRequests:db.extraCodeRequests});
+  const db=loadDB(); res.json({success:true,tickets:db.supportTickets,extraCodeRequests:db.extraCodeRequests,suggestions:db.suggestions||[]});
 });
-app.post("/api/admin/reply-ticket",  (req, res) => {
+app.post("/api/admin/reply-ticket",   (req, res) => {
   if (!adminCheck(req.body.adminKey)) return res.json({success:false});
   const db=loadDB(); const t=db.supportTickets.find(x=>x.id===req.body.ticketId);
   if(!t) return res.json({success:false,message:"Bulunamadı."});
   t.adminReply=req.body.reply; t.status="answered"; saveDB(db); res.json({success:true});
 });
-app.post("/api/admin/grant-extra-code",(req,res)=>{
+app.post("/api/admin/reply-suggestion",(req, res) => {
+  if (!adminCheck(req.body.adminKey)) return res.json({success:false});
+  const db=loadDB(); db.suggestions=db.suggestions||[];
+  const s=db.suggestions.find(x=>x.id===req.body.suggestionId);
+  if(!s) return res.json({success:false,message:"Bulunamadı."});
+  s.adminReply=req.body.reply; s.status="answered"; saveDB(db); res.json({success:true});
+});
+app.post("/api/admin/grant-extra-code",(req,res) => {
   if (!adminCheck(req.body.adminKey)) return res.json({success:false});
   const db=loadDB();
   const p=db.purchases.find(x=>x.id===req.body.purchaseId);
@@ -385,7 +438,7 @@ app.post("/api/admin/grant-extra-code",(req,res)=>{
   const r=db.extraCodeRequests.find(x=>x.id===req.body.requestId);
   if(r) r.status="granted"; saveDB(db); res.json({success:true});
 });
-app.post("/api/admin/update-stats",  (req, res) => {
+app.post("/api/admin/update-stats",   (req, res) => {
   if (!adminCheck(req.body.adminKey)) return res.json({success:false});
   const db=loadDB(); if(req.body.rating!==undefined) db.siteStats.rating=parseFloat(req.body.rating);
   saveDB(db); res.json({success:true});
@@ -415,4 +468,4 @@ function fetchSteamCodeFromGmail(user, pass) {
   });
 }
 
-app.listen(PORT, () => console.log(`✅ GameVault v3 — Port ${PORT}`));
+app.listen(PORT, () => console.log(`✅ AşkımÇokPardon v4 — Port ${PORT}`));
