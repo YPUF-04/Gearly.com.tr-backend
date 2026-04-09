@@ -14,12 +14,11 @@ const { getFirestore } = require("firebase-admin/firestore");
 // ── Firebase init ──────────────────────────────────────────────
 let firebaseApp;
 try {
-  const envVar = process.env.FIREBASE_SERVICE_ACCOUNT;
-  
-  if (!envVar) {
-    // Eğer Railway panelinde değişken yoksa bu hata tetiklenir
-    throw new Error("Railway Variables kısmında FIREBASE_SERVICE_ACCOUNT tanımlı değil!");
-  }
+const envVar = process.env.FIREBASE_SERVICE_ACCOUNT;
+if (envVar) {
+  const decodedData = Buffer.from(envVar.trim(), 'base64').toString('utf-8');
+  serviceAccount = JSON.parse(decodedData);
+}
 
   // Base64 kodunu çöz ve JSON'a çevir
   const decodedData = Buffer.from(envVar, 'base64').toString('utf-8');
