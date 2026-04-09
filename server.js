@@ -12,32 +12,15 @@ const { initializeApp, cert } = require("firebase-admin/app");
 const { getFirestore } = require("firebase-admin/firestore");
 
 // ── Firebase init ──────────────────────────────────────────────
-// ── Firebase init ──────────────────────────────────────────────
 let firebaseApp;
 try {
-  let serviceAccount;
-  const envVar = process.env.FIREBASE_SERVICE_ACCOUNT;
-
-  if (envVar) {
-    // Railway'den gelen veriyi kontrol et: { ile başlıyorsa düz JSON, değilse Base64
-    if (envVar.trim().startsWith('{')) {
-      serviceAccount = JSON.parse(envVar);
-    } else {
-      // Base64 formatını çöz
-      const decoded = Buffer.from(envVar, 'base64').toString('utf-8');
-      serviceAccount = JSON.parse(decoded);
-    }
-  } else {
-    serviceAccount = require("./service-account.json");
-  }
-
+  const serviceAccount = require("./service-account.json");
   firebaseApp = initializeApp({ credential: cert(serviceAccount) });
-  console.log("✅ Firebase başarıyla başlatıldı.");
+  console.log("✅ Firebase dosyadan başarıyla başlatıldı.");
 } catch (e) {
   console.error("❌ Firebase başlatılamadı:", e.message);
   process.exit(1);
 }
-
 const db = getFirestore(firebaseApp);
 // ── Express ────────────────────────────────────────────────────
 const app = express();
