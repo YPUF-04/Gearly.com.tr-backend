@@ -14,13 +14,26 @@ const { getFirestore } = require("firebase-admin/firestore");
 // ── Firebase init ──────────────────────────────────────────────
 let firebaseApp;
 try {
-const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT
-    ? JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT.replace(/\\n/g, '\n'))
-    : require("./service-account.json");
+  let serviceAccount;
+  const envVar = process.env.FIREBASE_SERVICE_ACCOUNT;
+
+  if (envVar) {
+    // Eğer veri { ile başlıyorsa normal JSON'dır, başlamıyorsa Base64'tür
+    if (envVar.trim().startsWith('{')) {
+      serviceAccount = JSON.parse(envVar);
+    } else {
+      // Base64 formatını çöz ve JSON'a çevir
+      const decoded = Buffer.from(envVar, 'base64').toString('utf-8');
+      serviceAccount = JSON.parse(decoded);
+    }
+  } else {
+    serviceAccount = require("./service-account.json");
+  }
+
   firebaseApp = initializeApp({ credential: cert(serviceAccount) });
+  console.log("✅ Firebase başarıyla başlatıldı.");
 } catch (e) {
   console.error("❌ Firebase başlatılamadı:", e.message);
-  console.error("   FIREBASE_SERVICE_ACCOUNT env var veya service-account.json gerekli.");
   process.exit(1);
 }
 const db = getFirestore(firebaseApp);
