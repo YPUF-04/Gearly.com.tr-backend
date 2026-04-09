@@ -12,37 +12,21 @@ const { initializeApp, cert } = require("firebase-admin/app");
 const { getFirestore } = require("firebase-admin/firestore");
 
 // ── Firebase init ──────────────────────────────────────────────
+// ── Firebase init ──────────────────────────────────────────────
 let firebaseApp;
 try {
-  let serviceAccount;
-  let envVar = process.env.FIREBASE_SERVICE_ACCOUNT;
+  // Veriyi kodun içine doğrudan gömüyoruz (En sağlam yöntem)
+  const base64Data = "eyJ0eXBlIjoic2VydmljZV9hY2NvdW50IiwicHJvamVjdF9pZCI6InN0ZWFtLW90byIsInByaXZhdGVfa2V5X2lkIjoiZDYzNGJhZGU2ZTMyYmMyYzkwMWViOTY5YmNlNzViYzEwMzk0M2M1YSIsInByaXZhdGVfa2V5IjoiLS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tXG5NSUlFdlFJQkFEQU5CZ2txaGtpRzl3MEJBUUVGQUFTQ0JLY3dnZ1NqQWdFQUFvSUJBUURIOSt0QlFlYytIOGVHXG5kNDMwMDFNK2tJc0E1V09aZWJLN0hMUUpGSHZiL2dMdU5PN1VxTFJvUkZFUzRTZ0VxeDE1VEtwdlRKSnJwVnJcbkdWL25iOTFNbENFNm5VNEFuNmt6UkpsYURQWHRiV2l2c1ovUXoxbFNpL1RIQUI4cWgwREdncnNPRENTRC82V1xuR2h5VzhLdFlibG95UUtkbUl0T0d4Snd1WUp4WXVSe2N5Rmo0QjgvcWE3SFJra2xLbDQ5dHhENGJKVmZoeW5yZlxubW1zb1lucTZ6ZTl5WEQzSVI4OER0VzNIZm51OE1WMHUwNHRBbjJjM2FZV2RLc0drRGV3Z1owWncraEZnR21TeVxuQ3Z0RUhrNHM0amxVdEFLWjhvSFltZ0srUllIcmVOSVhnTHFwNVdCdG5rZEw5Yk1kYjJDUUJxdnF3YkRFQWJQd1xuR3hKckxSNnpBZ01CQUFFQ2dnRUFWd3BMMmxkR3NneHNrcTd6RTNycUVvQ2dIYmFodll2Zy8wb0wrV3ZUeUlDXG4xbkswRkpDUjJPQWM1TU9pb1kzUGJoakNGNXFJTU03L3QyU1hteFZNSTB3NC9VbzVxTkxYdEQ0UjVWM0w5amxcblF2MTU2ZThxdkR0eG14dk82SFdpNEhWSE9QSHl6cnBRc0NXWXVXbjFwSzZRNjl3eUlxZFpYZ3FiRkNNeEcvdGVccG43TFhLTmtyR3JQeWo5ZDVXeEVZaStQY2hMOWhXcnFMRUVIaUFBc2Q2VktSNGk5Q0Vza2ZmcnNIMWxtSXZcdm1pWGR1OFpyczJ0NEx1bW5LWDZZUXAzc29YVUdpR1pkQ1VTYURPeEJTeSsvV3Yzbk51QmEyLzlWRnU2aDFwb1xuRlhuRTBvN1lZc0xBSVEvcWlXZmlwRUhWM3ZBMlJ2K1hlWm1uRzM2Sk5RS0JnUUQ5T3RpaTZzZDV0UUdwVUhMWVxuRGgzRlk3ZnV1VzlNTktqWGYveVlUNDRTUy9aeHZickNDZWZYRGp5NGxTMkpGR2hIZ2RudUV5ejhrQXBFZXZ2S1xuWERYZ05nY1gyOVJlZnpON0U0YW9oTDl1bU5FZFFUb3NCSFc4M0VqMi9QUngxdTVDdntraytHZVg2Q0RRM3lBeC9cbmhhS09Xa2xYYVBrWHhWS29LWmJJaHJTYy93S0JnUURLSStKNGNNSzcyQkdpcW5ZbTVqUUlVQzF6Zis5WnZ1NFpcblJyenNoY0hTODBBRnE3UTJ2VStaMmVMMEROVDBJRlhBZUx1Z1ZOdWU1TTl1S0tUa2NWRkZ3UWI3d0l5dEt0VW9cdndTTHhTZUFiZ2swcTcweFdLZXZTbzZlbjArc01mWGdBM0JDZGdXWklrcm43NGdyWXdxOWZ6UjBMYTRQZWRBdHRcbm9Tc0FLUmdhVFFLQmdRRElMcHpUTFlZRFVEUGdCUmpFYzJSVmhsOEErTlpqQjczeG5kdXhERExqZytsdVE1Q1xuTmxKd1QzRHcrZnpsUThZcndScmV5WUkycGlkM3UwRVExNU4xSzBDd083ZkdmQXo1enBYRTRpdnk0aHR0WlFMM1xuaVE4S1pvaFFwaWNYVnpGQzBlcFVqV1NnSTV3ai9LRGtybCt5NnpSallNcGRZRC9YY0FraXZGcExRUUtCZ1BaN0dcbm5xVUtGQ3d4RzMwUFdLRVpsVHpzejl3ODJIVC9hTCt4ZFlBMjV5MHBtY0lnYTNiR3JYR2h5RE4ySWU1NU04MG5caWk2eE15a0x0M3hHMjVEOXUrNXVGVGU1ZU5XN1B4NEV0VG9TNVVYWG0rZ2NsWk1GVzNwNFVhQW5SajF4TWgwSXRcbmVUR2lDUndRWWIzY3V4RjNXSFRiN091bGNsY1Z2ejViZXNYVWpreGxBb0dBWjVEaWV1d0czbE1JZFllNStEYUhcbitFNFdaYWVvOUxTbzJvVWRHV0Y0bzI2L256TjNmK3FJYkQxam4wZGpFQnAydVFUZW5ia3htYTBCOE1pTHQzak9cbmNIeXVtcHRydEJDTXdHby9tQVV0ajVWUDRvWFNncExtRFk5bFRlcDBBbDdpdll2RmNRVnhSck1aYnF0eDFqQ1xuU1hCOHowaVJIMVJEaC9zYlJ5VkdPVk09XG4iLCJjbGllbnRfZW1haWwiOiJmaXJlYmFzZS1hZG1pbnNkay1mYnN2Y0BzdGVhbS1vdG8uaWFtLmdzZXJ2aWNlYWNjb3VudC5jb20iLCJjbGllbnRfaWQiOiIxMTI1NzY3MjY0MDg4MTc3NzU1MjAiLCJhdXRoX3VyaSI6Imh0dHBzOi8vYWNjb3VudHMuZ29vZ2xlLmNvbS9vL29hdXRoMi9hdXRoIiwidG9rZW5fdXJpIjoiaHR0cHM6Ly9vYXV0aDIuZ29vZ2xlYXBpcy5jb20vdG9rZW4iLCJhdXRoX3Byb3ZpZGVyX3g1MDlfY2VydF91cmwiOiJodHRwczovL3d3dy5nb29nbGVhcGlzLmNvbS9vYXV0aDIvdjEvY2VydHMiLCJjbGllbnRfeDUwOV9jZXJ0X3VybSI6Imh0dHBzOi8vd3d3Lmdvb2dsZWFwaXMuY29tL3JvYm90L3YxL21ldGFkYXRhL3g1MDkvZmlyZWJhc2UtYWRtaW5zZGstZmJzdmMlNDBzdGVhbS1vdG8uaWFtLmdzZXJ2aWNlYWNjb3VudC5jb20iLCJ1bml2ZXJzZV9kb21haW4iOiJnb29nbGVhcGlzLmNvbSJ9";
 
-  if (envVar) {
-    // 1. ADIM: Veriyi her türlü kirlilikten temizle
-    // Tüm tırnakları, boşlukları ve hatalı olabilecek ters eğik çizgileri temizliyoruz
-    let cleaned = envVar.trim().replace(/[\r\n\t]/g, "");
-
-    // 2. ADIM: Eğer veri Base64 değilse (yani { ile başlıyorsa)
-    if (cleaned.startsWith('{')) {
-      // JSON içindeki bozuk kaçış karakterlerini (\n gibi) manuel düzelt
-      cleaned = cleaned.replace(/\\n/g, '\n');
-      serviceAccount = JSON.parse(cleaned);
-    } else {
-      // 3. ADIM: Base64 ise çöz
-      const decoded = Buffer.from(cleaned, 'base64').toString('utf-8');
-      serviceAccount = JSON.parse(decoded);
-    }
-  } else {
-    throw new Error("FIREBASE_SERVICE_ACCOUNT degiskeni Railway'de bulunamadi!");
-  }
+  const serviceAccount = JSON.parse(Buffer.from(base64Data, 'base64').toString('utf-8'));
 
   firebaseApp = initializeApp({ 
     credential: cert(serviceAccount),
     databaseURL: "https://steam-oto-default-rtdb.europe-west1.firebasedatabase.app"
   });
-  console.log("✅ Firebase TUM ENGELLERE RAGMEN baslatildi!");
+  console.log("✅ Firebase (INTERNAL) basariyla baslatildi.");
 } catch (e) {
-  console.error("❌ Kritik Hata:", e.message);
+  console.error("❌ Firebase hatasi:", e.message);
   process.exit(1);
 }
 const db = getFirestore(firebaseApp);
