@@ -257,7 +257,7 @@ app.post("/api/admin/get-support", (req, res) => {
 });
 
 app.post("/api/admin/reply-support", (req, res) => {
-  const { adminKey, requestId, reply, status } = req.body;
+  const { adminKey, requestId, reply, status, grantExtra } = req.body;
   if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
   const db = loadDB();
   const r = db.supportRequests.find(x => x.id === requestId);
@@ -265,6 +265,27 @@ app.post("/api/admin/reply-support", (req, res) => {
   if (reply) r.adminReply = reply;
   if (status) r.status = status;
   r.repliedAt = new Date().toISOString();
+
+  // Ek hak ver: purchase'ın steamCodeRequests sayısını 3 geri al (min 0)
+  if (grantExtra && r.purchaseId) {
+    const purchase = db.purchases.find(p => p.id === r.purchaseId);
+    if (purchase) {
+      purchase.steamCodeRequests = Math.max(0, (purchase.steamCodeRequests || 0) - 3);
+      r.extraGranted = true;
+    }
+  }
+
+  saveDB(db);
+  res.json({ success: true });
+});
+
+// ADMIN: KOD SİL
+app.post("/api/admin/delete-code", (req, res) => {
+  const { adminKey, code } = req.body;
+  if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
+  const db = loadDB();
+  if (!db.codes[code]) return res.json({ success: false, message: "Kod bulunamadı." });
+  delete db.codes[code];
   saveDB(db);
   res.json({ success: true });
 });
