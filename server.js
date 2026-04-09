@@ -271,22 +271,79 @@ app.post("/api/admin/reply-support", (req, res) => {
 
 function fetchSteamCodeFromGmail(user, pass) {
   return new Promise((resolve, reject) => {
-    const imap = new Imap({ user, password: pass, host: "imap.gmail.com", port: 993, tls: true, tlsOptions: { rejectUnauthorized: false } });
-    imap.once("error", reject);
+    const imap = new Imap({
+      user,
+      password: pass,
+      host: "imap.gmail.com",
+      port: 993,
+      tls: true,
+      tlsOptions: { rejectUnauthorized: false },
+      authTimeout: 10000,
+      connTimeout: 15000
+    });
+
+    let settled = false;
+    function done(err, val) {
+      if (settled) return;
+      settled = true;
+      try { imap.end(); } catch(_) {}
+      if (err) reject(err); else resolve(val);
+    }
+
+    imap.once("error", (err) => done(err));
+    imap.once("end", () => { if (!settled) done(null, null); });
+
     imap.once("ready", () => {
       imap.openBox("INBOX", false, (err) => {
-        if (err) { imap.end(); return reject(err); }
+        if (err) return done(err);
+
         const since = new Date();
-        since.setMinutes(since.getMinutes() - 10);
-        imap.search(["UNSEEN", ["FROM", "noreply@steampowered.com"], ["SINCE", since]], (err, results) => {
-          if (err || !results || results.length === 0) { imap.end(); return resolve(null); }
-          const f = imap.fetch(results[results.length - 1], { bodies: "" });
+        since.setMinutes(since.getMinutes() - 15);
+
+        // Hem UNSEEN hem de son 15 dakika içindeki tüm Steam mailerlarını ara
+        imap.search([["FROM", "noreply@steampowered.com"], ["SINCE", since]], (err, results) => {
+          if (err || !results || results.length === 0) return done(null, null);
+
+          // En son maili al
+          const toFetch = results.slice(-3); // Son 3 maile bak
+          const f = imap.fetch(toFetch, { bodies: "" });
           let foundCode = null;
-          f.on("message", (msg) => { msg.on("body", (stream) => { simpleParser(stream, (err, parsed) => { const content = (parsed.text || "") + (parsed.html || ""); const match = content.match(/\b([A-Z0-9]{5})\b/); if (match) foundCode = match[1]; }); }); });
-          f.once("end", () => { imap.end(); setTimeout(() => resolve(foundCode), 1000); });
+          let pending = 0;
+
+          f.on("message", (msg) => {
+            pending++;
+            msg.on("body", (stream) => {
+              simpleParser(stream, (err, parsed) => {
+                if (!err && parsed) {
+                  const text = (parsed.text || "") + (parsed.html || "");
+                  // Steam 5 haneli doğrulama kodu: genelde "Steam Guard" maili içinde geçer
+                  // Daha geniş regex: sadece rakam/büyük harf 5 karakter blokları
+                  const patterns = [
+                    /Steam Guard kodunuz[:\s]+([A-Z0-9]{5})/i,
+                    /your steam guard code[:\s]+([A-Z0-9]{5})/i,
+                    /doğrulama kodu[:\s]+([A-Z0-9]{5})/i,
+                    /\b([A-Z0-9]{5})\b/
+                  ];
+                  for (const pat of patterns) {
+                    const m = text.match(pat);
+                    if (m) { foundCode = m[1]; break; }
+                  }
+                }
+                pending--;
+                if (pending === 0) done(null, foundCode);
+              });
+            });
+          });
+
+          f.once("error", (err) => done(null, null));
+          f.once("end", () => {
+            // simpleParser callbacks henüz bitmemiş olabilir, bekle
+            setTimeout(() => { if (!settled) done(null, foundCode); }, 2000);
+          });
         });
       });
     });
+
     imap.connect();
   });
 }
