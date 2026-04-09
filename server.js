@@ -143,6 +143,21 @@ app.post("/api/get-steam-code", async (req, res) => {
   }
 });
 
+// SON SATIN ALMALAR (public — kullanıcı adı gizlendi)
+app.get("/api/recent-purchases", (req, res) => {
+  const db = loadDB();
+  const recent = db.purchases
+    .slice(-30)
+    .reverse()
+    .map(p => ({
+      username: p.username ? p.username.substring(0, 3) + "***" : "???",
+      gameName: p.gameName,
+      gameEmoji: p.gameEmoji || "🎮",
+      purchasedAt: p.purchasedAt
+    }));
+  res.json({ success: true, purchases: recent });
+});
+
 // ADMIN: OYUN EKLE
 app.post("/api/admin/add-game", upload.single("image"), (req, res) => {
   const { adminKey, gameName, steamUser, steamPass, gmailUser, gmailPass, platform, price, emoji } = req.body;
