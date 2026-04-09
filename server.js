@@ -15,37 +15,37 @@ const { getFirestore } = require("firebase-admin/firestore");
 let firebaseApp;
 try {
   let serviceAccount;
-  const envVar = process.env.FIREBASE_SERVICE_ACCOUNT;
+  let envVar = process.env.FIREBASE_SERVICE_ACCOUNT;
 
   if (envVar) {
-    // Veriyi temizle: Boşlukları al ve çift ters eğik çizgileri düzelt
-    const cleanedEnv = envVar.trim().replace(/\\n/g, '\n');
-    
-    if (cleanedEnv.startsWith('{')) {
-      serviceAccount = JSON.parse(cleanedEnv);
+    // 1. ADIM: Veriyi her türlü kirlilikten temizle
+    // Tüm tırnakları, boşlukları ve hatalı olabilecek ters eğik çizgileri temizliyoruz
+    let cleaned = envVar.trim().replace(/[\r\n\t]/g, "");
+
+    // 2. ADIM: Eğer veri Base64 değilse (yani { ile başlıyorsa)
+    if (cleaned.startsWith('{')) {
+      // JSON içindeki bozuk kaçış karakterlerini (\n gibi) manuel düzelt
+      cleaned = cleaned.replace(/\\n/g, '\n');
+      serviceAccount = JSON.parse(cleaned);
     } else {
-      // Base64 ise çöz
-      const decoded = Buffer.from(cleanedEnv, 'base64').toString('utf-8');
+      // 3. ADIM: Base64 ise çöz
+      const decoded = Buffer.from(cleaned, 'base64').toString('utf-8');
       serviceAccount = JSON.parse(decoded);
     }
-    console.log("ℹ️ Firebase yapılandırması yüklendi.");
   } else {
-    throw new Error("FIREBASE_SERVICE_ACCOUNT bulunamadı!");
+    throw new Error("FIREBASE_SERVICE_ACCOUNT degiskeni Railway'de bulunamadi!");
   }
 
   firebaseApp = initializeApp({ 
     credential: cert(serviceAccount),
     databaseURL: "https://steam-oto-default-rtdb.europe-west1.firebasedatabase.app"
   });
-  console.log("✅ Firebase başarıyla başlatıldı.");
+  console.log("✅ Firebase TUM ENGELLERE RAGMEN baslatildi!");
 } catch (e) {
-  console.error("❌ Firebase hatası:", e.message);
-  // Hata detayını daha net görmek için:
-  if (e.message.includes("JSON")) {
-     console.error("⚠️ JSON formatı bozuk. Railway Variables kısmındaki veriyi kontrol et.");
-  }
+  console.error("❌ Kritik Hata:", e.message);
   process.exit(1);
 }
+const db = getFirestore(firebaseApp);
 // ── Express ────────────────────────────────────────────────────
 const app = express();
 app.use(cors({ origin: "*", methods: ["GET","POST","PUT","DELETE"], allowedHeaders: ["Content-Type"] }));
