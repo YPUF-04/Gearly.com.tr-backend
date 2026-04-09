@@ -18,15 +18,15 @@ try {
   const envVar = process.env.FIREBASE_SERVICE_ACCOUNT;
 
   if (envVar) {
-    // Eğer veri { ile başlıyorsa normal JSON'dır, başlamıyorsa Base64'tür
+    // Base64 veya düz JSON kontrolü yapıyoruz
     if (envVar.trim().startsWith('{')) {
       serviceAccount = JSON.parse(envVar);
     } else {
-      // Base64 formatını çöz ve JSON'a çevir
       const decoded = Buffer.from(envVar, 'base64').toString('utf-8');
       serviceAccount = JSON.parse(decoded);
     }
   } else {
+    // Localde çalışıyorsan dosya arar
     serviceAccount = require("./service-account.json");
   }
 
@@ -36,6 +36,8 @@ try {
   console.error("❌ Firebase başlatılamadı:", e.message);
   process.exit(1);
 }
+
+// BU SATIR KALMALI! Veri tabanı işlemleri için bu şart.
 const db = getFirestore(firebaseApp);
 
 // ── Express ────────────────────────────────────────────────────
