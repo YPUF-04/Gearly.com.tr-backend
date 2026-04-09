@@ -14,13 +14,25 @@ const { getFirestore } = require("firebase-admin/firestore");
 // ── Firebase init ──────────────────────────────────────────────
 let firebaseApp;
 try {
-  const serviceAccount = require("./service-account.json");
-  firebaseApp = initializeApp({ credential: cert(serviceAccount) });
-  console.log("✅ Firebase dosyadan başarıyla başlatıldı.");
+  // require yerine fs ile okumak gizli karakter hatalarını engeller
+  const fs = require('fs');
+  const path = require('path');
+  const serviceAccountPath = path.join(__dirname, "service-account.json");
+  
+  const rawData = fs.readFileSync(serviceAccountPath, 'utf8');
+  const serviceAccount = JSON.parse(rawData);
+
+  firebaseApp = initializeApp({ 
+    credential: cert(serviceAccount),
+    databaseURL: "https://steam-oto-default-rtdb.europe-west1.firebasedatabase.app"
+  });
+  
+  console.log("✅ Firebase (Firestore & RTDB) başarıyla başlatıldı.");
 } catch (e) {
   console.error("❌ Firebase başlatılamadı:", e.message);
   process.exit(1);
 }
+
 const db = getFirestore(firebaseApp);
 // ── Express ────────────────────────────────────────────────────
 const app = express();
