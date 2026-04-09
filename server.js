@@ -18,24 +18,21 @@ try {
   const envVar = process.env.FIREBASE_SERVICE_ACCOUNT;
 
   if (envVar) {
-    // Eğer veri { ile başlıyorsa düz JSON'dır, başlamıyorsa Base64'tür
-    if (envVar.trim().startsWith('{')) {
-      serviceAccount = JSON.parse(envVar);
-    } else {
-      // Base64 formatını çöz ve JSON'a çevir (Karakter hatasını engeller)
-      const decoded = Buffer.from(envVar, 'base64').toString('utf-8');
-      serviceAccount = JSON.parse(decoded);
-    }
+    // Railway'den gelen Base64 veriyi çöz
+    const decoded = Buffer.from(envVar, 'base64').toString('utf-8');
+    serviceAccount = JSON.parse(decoded);
+    console.log("ℹ️ Firebase ENV üzerinden yapılandırıldı.");
   } else {
-    // Localdeysen dosyadan okur
-    serviceAccount = require("./service-account.json");
+    // Eğer ENV yoksa ve dosya da yoksa hata fırlatmasını önleyelim
+    console.error("❌ FIREBASE_SERVICE_ACCOUNT bulunamadı!");
+    process.exit(1);
   }
 
   firebaseApp = initializeApp({ 
     credential: cert(serviceAccount),
     databaseURL: "https://steam-oto-default-rtdb.europe-west1.firebasedatabase.app"
   });
-  console.log("✅ Firebase (ENV üzerinden) başarıyla başlatıldı.");
+  console.log("✅ Firebase başarıyla başlatıldı.");
 } catch (e) {
   console.error("❌ Firebase başlatılamadı:", e.message);
   process.exit(1);
