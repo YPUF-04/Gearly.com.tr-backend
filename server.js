@@ -14,8 +14,8 @@ const { getFirestore } = require("firebase-admin/firestore");
 // ── Firebase init ──────────────────────────────────────────────
 let firebaseApp;
 try {
-  const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT
-    ? JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)
+const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT
+    ? JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT.replace(/\\n/g, '\n'))
     : require("./service-account.json");
   firebaseApp = initializeApp({ credential: cert(serviceAccount) });
 } catch (e) {
