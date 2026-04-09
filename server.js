@@ -18,15 +18,17 @@ try {
   const envVar = process.env.FIREBASE_SERVICE_ACCOUNT;
 
   if (envVar) {
-    // Base64 veya düz JSON kontrolü yapıyoruz
+    // Railway'den gelen veriyi kontrol et
     if (envVar.trim().startsWith('{')) {
+      // Düz JSON ise (Hata alma riski yüksek olan yöntem)
       serviceAccount = JSON.parse(envVar);
     } else {
+      // Base64 formatı ise (En güvenli yöntem)
       const decoded = Buffer.from(envVar, 'base64').toString('utf-8');
       serviceAccount = JSON.parse(decoded);
     }
   } else {
-    // Localde çalışıyorsan dosya arar
+    // Yerel geliştirme için dosya kontrolü
     serviceAccount = require("./service-account.json");
   }
 
@@ -37,9 +39,7 @@ try {
   process.exit(1);
 }
 
-// BU SATIR KALMALI! Veri tabanı işlemleri için bu şart.
 const db = getFirestore(firebaseApp);
-
 // ── Express ────────────────────────────────────────────────────
 const app = express();
 app.use(cors({ origin: "*", methods: ["GET","POST","PUT","DELETE"], allowedHeaders: ["Content-Type"] }));
