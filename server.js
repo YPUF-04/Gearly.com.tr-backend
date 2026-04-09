@@ -14,28 +14,27 @@ const { getFirestore } = require("firebase-admin/firestore");
 // ── Firebase init ──────────────────────────────────────────────
 let firebaseApp;
 try {
-  let serviceAccount;
   const envVar = process.env.FIREBASE_SERVICE_ACCOUNT;
-
-  if (envVar) {
-    // Railway'den gelen Base64 veriyi çöz
-    const decoded = Buffer.from(envVar, 'base64').toString('utf-8');
-    serviceAccount = JSON.parse(decoded);
-    console.log("ℹ️ Firebase ENV üzerinden yapılandırıldı.");
-  } else {
-    // Eğer ENV yoksa ve dosya da yoksa hata fırlatmasını önleyelim
-    console.error("❌ FIREBASE_SERVICE_ACCOUNT bulunamadı!");
-    process.exit(1);
+  
+  if (!envVar) {
+    // Eğer Railway panelinde değişken yoksa bu hata tetiklenir
+    throw new Error("Railway Variables kısmında FIREBASE_SERVICE_ACCOUNT tanımlı değil!");
   }
+
+  // Base64 kodunu çöz ve JSON'a çevir
+  const decodedData = Buffer.from(envVar, 'base64').toString('utf-8');
+  const serviceAccount = JSON.parse(decodedData);
 
   firebaseApp = initializeApp({ 
     credential: cert(serviceAccount),
     databaseURL: "https://steam-oto-default-rtdb.europe-west1.firebasedatabase.app"
   });
-  console.log("✅ Firebase başarıyla başlatıldı.");
+  
+  console.log("✅ Firebase (ENV üzerinden) başarıyla başlatıldı.");
 } catch (e) {
-  console.error("❌ Firebase başlatılamadı:", e.message);
-  process.exit(1);
+  // Burası çalışıyorsa ya değişken yoktur ya da Base64 kodu bozuktur
+  console.error("❌ Firebase hatası:", e.message);
+  process.exit(1); 
 }
 
 const db = getFirestore(firebaseApp);
