@@ -40,12 +40,12 @@ function saveDB(db) { fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2)); }
 
 // KAYIT / GİRİŞ
 app.post("/api/register", (req, res) => {
-  const { username, password } = req.body;
+  const { username, email, password } = req.body;
   if (!username || !password) return res.json({ success: false, message: "Kullanıcı adı ve şifre gerekli." });
   const db = loadDB();
   const key = username.toLowerCase();
   if (db.users[key]) return res.json({ success: false, message: "Bu kullanıcı adı zaten alınmış." });
-  db.users[key] = { username, password, createdAt: new Date().toISOString(), balance: 0 };
+  db.users[key] = { username, email: email || "", password, createdAt: new Date().toISOString(), balance: 0 };
   saveDB(db);
   res.json({ success: true, message: "Kayıt başarılı." });
 });
@@ -56,7 +56,7 @@ app.post("/api/login", (req, res) => {
   const key = username?.toLowerCase();
   const user = db.users[key];
   if (!user || user.password !== password) return res.json({ success: false, message: "Kullanıcı adı veya şifre hatalı." });
-  res.json({ success: true, username: user.username, balance: user.balance });
+  res.json({ success: true, username: user.username, balance: user.balance, email: user.email || "" });
 });
 
 // İSTATİSTİKLER
@@ -143,11 +143,11 @@ app.post("/api/get-steam-code", async (req, res) => {
   }
 });
 
-// SON SATIN ALMALAR (public — kullanıcı adı gizlendi)
+// SON SATIN ALMALAR (public — gizlenmiş kullanıcı adı)
 app.get("/api/recent-purchases", (req, res) => {
   const db = loadDB();
   const recent = db.purchases
-    .slice(-30)
+    .slice(-50)
     .reverse()
     .map(p => ({
       username: p.username ? p.username.substring(0, 3) + "***" : "???",
