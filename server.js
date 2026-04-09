@@ -12,24 +12,19 @@ const { initializeApp, cert } = require("firebase-admin/app");
 const { getFirestore } = require("firebase-admin/firestore");
 
 // ── Firebase init ──────────────────────────────────────────────
-// ── Firebase init ──────────────────────────────────────────────
 let firebaseApp;
 try {
-  // Veriyi kodun içine doğrudan gömüyoruz (En sağlam yöntem)
-  const base64Data = "eyJ0eXBlIjoic2VydmljZV9hY2NvdW50IiwicHJvamVjdF9pZCI6InN0ZWFtLW90byIsInByaXZhdGVfa2V5X2lkIjoiZDYzNGJhZGU2ZTMyYmMyYzkwMWViOTY5YmNlNzViYzEwMzk0M2M1YSIsInByaXZhdGVfa2V5IjoiLS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tXG5NSUlFdlFJQkFEQU5CZ2txaGtpRzl3MEJBUUVGQUFTQ0JLY3dnZ1NqQWdFQUFvSUJBUURIOSt0QlFlYytIOGVHXG5kNDMwMDFNK2tJc0E1V09aZWJLN0hMUUpGSHZiL2dMdU5PN1VxTFJvUkZFUzRTZ0VxeDE1VEtwdlRKSnJwVnJcbkdWL25iOTFNbENFNm5VNEFuNmt6UkpsYURQWHRiV2l2c1ovUXoxbFNpL1RIQUI4cWgwREdncnNPRENTRC82V1xuR2h5VzhLdFlibG95UUtkbUl0T0d4Snd1WUp4WXVSe2N5Rmo0QjgvcWE3SFJra2xLbDQ5dHhENGJKVmZoeW5yZlxubW1zb1lucTZ6ZTl5WEQzSVI4OER0VzNIZm51OE1WMHUwNHRBbjJjM2FZV2RLc0drRGV3Z1owWncraEZnR21TeVxuQ3Z0RUhrNHM0amxVdEFLWjhvSFltZ0srUllIcmVOSVhnTHFwNVdCdG5rZEw5Yk1kYjJDUUJxdnF3YkRFQWJQd1xuR3hKckxSNnpBZ01CQUFFQ2dnRUFWd3BMMmxkR3NneHNrcTd6RTNycUVvQ2dIYmFodll2Zy8wb0wrV3ZUeUlDXG4xbkswRkpDUjJPQWM1TU9pb1kzUGJoakNGNXFJTU03L3QyU1hteFZNSTB3NC9VbzVxTkxYdEQ0UjVWM0w5amxcblF2MTU2ZThxdkR0eG14dk82SFdpNEhWSE9QSHl6cnBRc0NXWXVXbjFwSzZRNjl3eUlxZFpYZ3FiRkNNeEcvdGVccG43TFhLTmtyR3JQeWo5ZDVXeEVZaStQY2hMOWhXcnFMRUVIaUFBc2Q2VktSNGk5Q0Vza2ZmcnNIMWxtSXZcdm1pWGR1OFpyczJ0NEx1bW5LWDZZUXAzc29YVUdpR1pkQ1VTYURPeEJTeSsvV3Yzbk51QmEyLzlWRnU2aDFwb1xuRlhuRTBvN1lZc0xBSVEvcWlXZmlwRUhWM3ZBMlJ2K1hlWm1uRzM2Sk5RS0JnUUQ5T3RpaTZzZDV0UUdwVUhMWVxuRGgzRlk3ZnV1VzlNTktqWGYveVlUNDRTUy9aeHZickNDZWZYRGp5NGxTMkpGR2hIZ2RudUV5ejhrQXBFZXZ2S1xuWERYZ05nY1gyOVJlZnpON0U0YW9oTDl1bU5FZFFUb3NCSFc4M0VqMi9QUngxdTVDdntraytHZVg2Q0RRM3lBeC9cbmhhS09Xa2xYYVBrWHhWS29LWmJJaHJTYy93S0JnUURLSStKNGNNSzcyQkdpcW5ZbTVqUUlVQzF6Zis5WnZ1NFpcblJyenNoY0hTODBBRnE3UTJ2VStaMmVMMEROVDBJRlhBZUx1Z1ZOdWU1TTl1S0tUa2NWRkZ3UWI3d0l5dEt0VW9cdndTTHhTZUFiZ2swcTcweFdLZXZTbzZlbjArc01mWGdBM0JDZGdXWklrcm43NGdyWXdxOWZ6UjBMYTRQZWRBdHRcbm9Tc0FLUmdhVFFLQmdRRElMcHpUTFlZRFVEUGdCUmpFYzJSVmhsOEErTlpqQjczeG5kdXhERExqZytsdVE1Q1xuTmxKd1QzRHcrZnpsUThZcndScmV5WUkycGlkM3UwRVExNU4xSzBDd083ZkdmQXo1enBYRTRpdnk0aHR0WlFMM1xuaVE4S1pvaFFwaWNYVnpGQzBlcFVqV1NnSTV3ai9LRGtybCt5NnpSallNcGRZRC9YY0FraXZGcExRUUtCZ1BaN0dcbm5xVUtGQ3d4RzMwUFdLRVpsVHpzejl3ODJIVC9hTCt4ZFlBMjV5MHBtY0lnYTNiR3JYR2h5RE4ySWU1NU04MG5caWk2eE15a0x0M3hHMjVEOXUrNXVGVGU1ZU5XN1B4NEV0VG9TNVVYWG0rZ2NsWk1GVzNwNFVhQW5SajF4TWgwSXRcbmVUR2lDUndRWWIzY3V4RjNXSFRiN091bGNsY1Z2ejViZXNYVWpreGxBb0dBWjVEaWV1d0czbE1JZFllNStEYUhcbitFNFdaYWVvOUxTbzJvVWRHV0Y0bzI2L256TjNmK3FJYkQxam4wZGpFQnAydVFUZW5ia3htYTBCOE1pTHQzak9cbmNIeXVtcHRydEJDTXdHby9tQVV0ajVWUDRvWFNncExtRFk5bFRlcDBBbDdpdll2RmNRVnhSck1aYnF0eDFqQ1xuU1hCOHowaVJIMVJEaC9zYlJ5VkdPVk09XG4iLCJjbGllbnRfZW1haWwiOiJmaXJlYmFzZS1hZG1pbnNkay1mYnN2Y0BzdGVhbS1vdG8uaWFtLmdzZXJ2aWNlYWNjb3VudC5jb20iLCJjbGllbnRfaWQiOiIxMTI1NzY3MjY0MDg4MTc3NzU1MjAiLCJhdXRoX3VyaSI6Imh0dHBzOi8vYWNjb3VudHMuZ29vZ2xlLmNvbS9vL29hdXRoMi9hdXRoIiwidG9rZW5fdXJpIjoiaHR0cHM6Ly9vYXV0aDIuZ29vZ2xlYXBpcy5jb20vdG9rZW4iLCJhdXRoX3Byb3ZpZGVyX3g1MDlfY2VydF91cmwiOiJodHRwczovL3d3dy5nb29nbGVhcGlzLmNvbS9vYXV0aDIvdjEvY2VydHMiLCJjbGllbnRfeDUwOV9jZXJ0X3VybSI6Imh0dHBzOi8vd3d3Lmdvb2dsZWFwaXMuY29tL3JvYm90L3YxL21ldGFkYXRhL3g1MDkvZmlyZWJhc2UtYWRtaW5zZGstZmJzdmMlNDBzdGVhbS1vdG8uaWFtLmdzZXJ2aWNlYWNjb3VudC5jb20iLCJ1bml2ZXJzZV9kb21haW4iOiJnb29nbGVhcGlzLmNvbSJ9";
-
-  const serviceAccount = JSON.parse(Buffer.from(base64Data, 'base64').toString('utf-8'));
-
-  firebaseApp = initializeApp({ 
-    credential: cert(serviceAccount),
-    databaseURL: "https://steam-oto-default-rtdb.europe-west1.firebasedatabase.app"
-  });
-  console.log("✅ Firebase (INTERNAL) basariyla baslatildi.");
+  const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT
+    ? JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)
+    : require("./service-account.json");
+  firebaseApp = initializeApp({ credential: cert(serviceAccount) });
 } catch (e) {
-  console.error("❌ Firebase hatasi:", e.message);
+  console.error("❌ Firebase başlatılamadı:", e.message);
+  console.error("   FIREBASE_SERVICE_ACCOUNT env var veya service-account.json gerekli.");
   process.exit(1);
 }
 const db = getFirestore(firebaseApp);
+
 // ── Express ────────────────────────────────────────────────────
 const app = express();
 app.use(cors({ origin: "*", methods: ["GET","POST","PUT","DELETE"], allowedHeaders: ["Content-Type"] }));
@@ -54,6 +49,7 @@ const C = {
   codes:    () => db.collection("codes"),
   support:  () => db.collection("supportRequests"),
   settings: () => db.collection("settings").doc("site"),
+  reviews:  () => db.collection("reviews"),
 };
 
 // ══════════════════════════════════════════════════
@@ -118,11 +114,20 @@ app.post("/api/redeem-code", async (req, res) => {
 // ══════════════════════════════════════════════════
 
 app.get("/api/games", async (req, res) => {
-  const snap = await C.games().orderBy("createdAt", "asc").get();
+  const snap = await C.games().get();
   const games = snap.docs.map(d => {
     const { gmailPass, steamPass, steamUser, gmailUser, ...rest } = d.data();
     return { id: d.id, ...rest };
-  });
+  }).sort((a,b) => (a.createdAt||"").localeCompare(b.createdAt||""));
+  res.json({ success: true, games });
+});
+
+app.get("/api/popular-games", async (req, res) => {
+  const snap = await C.games().get();
+  const games = snap.docs.map(d => {
+    const { gmailPass, steamPass, steamUser, gmailUser, ...rest } = d.data();
+    return { id: d.id, ...rest };
+  }).filter(g => g.popular).sort((a,b) => (a.popularOrder||99) - (b.popularOrder||99)).slice(0,6);
   res.json({ success: true, games });
 });
 
@@ -148,15 +153,55 @@ app.post("/api/purchase", async (req, res) => {
 
 app.get("/api/my-purchases", async (req, res) => {
   const { username } = req.query;
-  const snap = await C.purchases().where("username", "==", username).orderBy("purchasedAt", "asc").get();
-  const purchases = snap.docs.map(d => { const p = d.data(); return { id: d.id, gameName: p.gameName, gameEmoji: p.gameEmoji, steamUser: p.steamUser, steamPass: p.steamPass, purchasedAt: p.purchasedAt, steamCodeRequests: p.steamCodeRequests || 0, lastSteamCode: p.lastSteamCode || null }; });
+  const snap = await C.purchases().where("username", "==", username).get();
+  const purchases = snap.docs.map(d => { const p = d.data(); return { id: d.id, gameName: p.gameName, gameEmoji: p.gameEmoji, steamUser: p.steamUser, steamPass: p.steamPass, purchasedAt: p.purchasedAt, steamCodeRequests: p.steamCodeRequests || 0, lastSteamCode: p.lastSteamCode || null }; })
+    .sort((a,b)=>(a.purchasedAt||"").localeCompare(b.purchasedAt||""));
   res.json({ success: true, purchases });
 });
 
 app.get("/api/recent-purchases", async (req, res) => {
-  const snap = await C.purchases().orderBy("purchasedAt", "desc").limit(30).get();
-  const purchases = snap.docs.map(d => { const p = d.data(); return { username: p.username ? p.username.substring(0,3)+"***" : "???", gameName: p.gameName, gameEmoji: p.gameEmoji || "🎮", purchasedAt: p.purchasedAt }; });
+  const snap = await C.purchases().get();
+  const purchases = snap.docs.map(d => { const p = d.data(); return { username: p.username ? p.username.substring(0,3)+"***" : "???", gameName: p.gameName, gameEmoji: p.gameEmoji || "🎮", purchasedAt: p.purchasedAt }; })
+    .sort((a,b)=>(b.purchasedAt||"").localeCompare(a.purchasedAt||"")).slice(0,30);
   res.json({ success: true, purchases });
+});
+
+// ══════════════════════════════════════════════════
+// REVIEWS (Kullanıcı Yorumları)
+// ══════════════════════════════════════════════════
+
+app.get("/api/reviews", async (req, res) => {
+  const snap = await C.reviews().get();
+  const reviews = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+    .sort((a,b) => (a.order||99) - (b.order||99));
+  res.json({ success: true, reviews });
+});
+
+app.post("/api/admin/add-review", async (req, res) => {
+  const { adminKey, username, message, avatar, rating, order } = req.body;
+  if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
+  const ref = await C.reviews().add({ username: username||"Kullanıcı", message, avatar: avatar||"😊", rating: parseInt(rating)||5, order: parseInt(order)||99, createdAt: new Date().toISOString() });
+  res.json({ success: true, id: ref.id });
+});
+
+app.post("/api/admin/update-review", async (req, res) => {
+  const { adminKey, reviewId, username, message, avatar, rating, order } = req.body;
+  if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
+  const upd = {};
+  if (username !== undefined) upd.username = username;
+  if (message !== undefined) upd.message = message;
+  if (avatar !== undefined) upd.avatar = avatar;
+  if (rating !== undefined) upd.rating = parseInt(rating);
+  if (order !== undefined) upd.order = parseInt(order);
+  await C.reviews().doc(reviewId).update(upd);
+  res.json({ success: true });
+});
+
+app.post("/api/admin/delete-review", async (req, res) => {
+  const { adminKey, reviewId } = req.body;
+  if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
+  await C.reviews().doc(reviewId).delete();
+  res.json({ success: true });
 });
 
 // ══════════════════════════════════════════════════
@@ -197,8 +242,10 @@ app.post("/api/support-request", async (req, res) => {
 
 app.get("/api/my-support", async (req, res) => {
   const { username } = req.query;
-  const snap = await C.support().where("username", "==", username).orderBy("createdAt", "desc").get();
-  res.json({ success: true, tickets: snap.docs.map(d => ({ id: d.id, ...d.data() })) });
+  const snap = await C.support().where("username", "==", username).get();
+  const tickets = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+    .sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||""));
+  res.json({ success: true, tickets });
 });
 
 // ══════════════════════════════════════════════════
@@ -208,8 +255,10 @@ app.get("/api/my-support", async (req, res) => {
 app.post("/api/admin/get-games", async (req, res) => {
   const { adminKey } = req.body;
   if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
-  const snap = await C.games().orderBy("createdAt", "asc").get();
-  res.json({ success: true, games: snap.docs.map(d => ({ id: d.id, ...d.data() })) });
+  const snap = await C.games().get();
+  const games = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+    .sort((a,b)=>(a.createdAt||"").localeCompare(b.createdAt||""));
+  res.json({ success: true, games });
 });
 
 app.post("/api/admin/add-game", upload.single("image"), async (req, res) => {
@@ -222,7 +271,17 @@ app.post("/api/admin/add-game", upload.single("image"), async (req, res) => {
   res.json({ success: true, message: "Oyun eklendi.", game: { id, ...safe } });
 });
 
-app.post("/api/admin/edit-game", upload.single("image"), async (req, res) => {
+app.post("/api/admin/toggle-popular", async (req, res) => {
+  const { adminKey, gameId, popular, popularOrder } = req.body;
+  if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
+  const ref = C.games().doc(gameId);
+  const snap = await ref.get();
+  if (!snap.exists) return res.json({ success: false, message: "Oyun bulunamadı." });
+  await ref.update({ popular: !!popular, popularOrder: parseInt(popularOrder) || 99 });
+  res.json({ success: true });
+});
+
+
   const { adminKey, gameId, gameName, steamUser, steamPass, gmailUser, gmailPass, platform, price, emoji } = req.body;
   if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
   const snap = await C.games().doc(gameId).get();
@@ -258,8 +317,10 @@ app.post("/api/admin/add-code", async (req, res) => {
 app.post("/api/admin/get-codes", async (req, res) => {
   const { adminKey } = req.body;
   if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
-  const snap = await C.codes().orderBy("createdAt", "desc").get();
-  res.json({ success: true, codes: snap.docs.map(d => ({ code: d.id, ...d.data() })) });
+  const snap = await C.codes().get();
+  const codes = snap.docs.map(d => ({ code: d.id, ...d.data() }))
+    .sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||""));
+  res.json({ success: true, codes });
 });
 
 app.post("/api/admin/delete-code", async (req, res) => {
@@ -298,8 +359,10 @@ app.post("/api/admin/update-balance", async (req, res) => {
 app.post("/api/admin/get-purchases", async (req, res) => {
   const { adminKey } = req.body;
   if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
-  const snap = await C.purchases().orderBy("purchasedAt", "desc").get();
-  res.json({ success: true, purchases: snap.docs.map(d => { const p = d.data(); return { id: d.id, username: p.username, gameName: p.gameName, gameEmoji: p.gameEmoji, purchasedAt: p.purchasedAt, steamCodeRequests: p.steamCodeRequests || 0 }; }) });
+  const snap = await C.purchases().get();
+  const purchases = snap.docs.map(d => { const p = d.data(); return { id: d.id, username: p.username, gameName: p.gameName, gameEmoji: p.gameEmoji, purchasedAt: p.purchasedAt, steamCodeRequests: p.steamCodeRequests || 0 }; })
+    .sort((a,b)=>(b.purchasedAt||"").localeCompare(a.purchasedAt||""));
+  res.json({ success: true, purchases });
 });
 
 // Admin — satın alım satırından doğrudan hak iade et
@@ -323,8 +386,10 @@ app.post("/api/admin/grant-requests", async (req, res) => {
 app.post("/api/admin/get-support", async (req, res) => {
   const { adminKey } = req.body;
   if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
-  const snap = await C.support().orderBy("createdAt", "desc").get();
-  res.json({ success: true, requests: snap.docs.map(d => ({ id: d.id, ...d.data() })) });
+  const snap = await C.support().get();
+  const requests = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+    .sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||""));
+  res.json({ success: true, requests });
 });
 
 app.post("/api/admin/reply-support", async (req, res) => {
