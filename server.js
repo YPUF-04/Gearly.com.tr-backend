@@ -281,7 +281,7 @@ app.post("/api/admin/toggle-popular", async (req, res) => {
   res.json({ success: true });
 });
 
-
+app.post("/api/admin/edit-game", upload.single("image"), async (req, res) => {
   const { adminKey, gameId, gameName, steamUser, steamPass, gmailUser, gmailPass, platform, price, emoji } = req.body;
   if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
   const snap = await C.games().doc(gameId).get();
