@@ -14,29 +14,38 @@ const { getFirestore } = require("firebase-admin/firestore");
 // ── Firebase init ──────────────────────────────────────────────
 let firebaseApp;
 try {
-const envVar = process.env.FIREBASE_SERVICE_ACCOUNT;
-if (envVar) {
-  const decodedData = Buffer.from(envVar.trim(), 'base64').toString('utf-8');
-  serviceAccount = JSON.parse(decodedData);
-}
+  let serviceAccount;
+  const envVar = process.env.FIREBASE_SERVICE_ACCOUNT;
 
-  // Base64 kodunu çöz ve JSON'a çevir
-  const decodedData = Buffer.from(envVar, 'base64').toString('utf-8');
-  const serviceAccount = JSON.parse(decodedData);
+  if (envVar) {
+    // Veriyi temizle: Boşlukları al ve çift ters eğik çizgileri düzelt
+    const cleanedEnv = envVar.trim().replace(/\\n/g, '\n');
+    
+    if (cleanedEnv.startsWith('{')) {
+      serviceAccount = JSON.parse(cleanedEnv);
+    } else {
+      // Base64 ise çöz
+      const decoded = Buffer.from(cleanedEnv, 'base64').toString('utf-8');
+      serviceAccount = JSON.parse(decoded);
+    }
+    console.log("ℹ️ Firebase yapılandırması yüklendi.");
+  } else {
+    throw new Error("FIREBASE_SERVICE_ACCOUNT bulunamadı!");
+  }
 
   firebaseApp = initializeApp({ 
     credential: cert(serviceAccount),
     databaseURL: "https://steam-oto-default-rtdb.europe-west1.firebasedatabase.app"
   });
-  
-  console.log("✅ Firebase (ENV üzerinden) başarıyla başlatıldı.");
+  console.log("✅ Firebase başarıyla başlatıldı.");
 } catch (e) {
-  // Burası çalışıyorsa ya değişken yoktur ya da Base64 kodu bozuktur
   console.error("❌ Firebase hatası:", e.message);
-  process.exit(1); 
+  // Hata detayını daha net görmek için:
+  if (e.message.includes("JSON")) {
+     console.error("⚠️ JSON formatı bozuk. Railway Variables kısmındaki veriyi kontrol et.");
+  }
+  process.exit(1);
 }
-
-const db = getFirestore(firebaseApp);
 // ── Express ────────────────────────────────────────────────────
 const app = express();
 app.use(cors({ origin: "*", methods: ["GET","POST","PUT","DELETE"], allowedHeaders: ["Content-Type"] }));
