@@ -14,20 +14,28 @@ const { getFirestore } = require("firebase-admin/firestore");
 // ── Firebase init ──────────────────────────────────────────────
 let firebaseApp;
 try {
-  // require yerine fs ile okumak gizli karakter hatalarını engeller
-  const fs = require('fs');
-  const path = require('path');
-  const serviceAccountPath = path.join(__dirname, "service-account.json");
-  
-  const rawData = fs.readFileSync(serviceAccountPath, 'utf8');
-  const serviceAccount = JSON.parse(rawData);
+  let serviceAccount;
+  const envVar = process.env.FIREBASE_SERVICE_ACCOUNT;
+
+  if (envVar) {
+    // Eğer veri { ile başlıyorsa düz JSON'dır, başlamıyorsa Base64'tür
+    if (envVar.trim().startsWith('{')) {
+      serviceAccount = JSON.parse(envVar);
+    } else {
+      // Base64 formatını çöz ve JSON'a çevir (Karakter hatasını engeller)
+      const decoded = Buffer.from(envVar, 'base64').toString('utf-8');
+      serviceAccount = JSON.parse(decoded);
+    }
+  } else {
+    // Localdeysen dosyadan okur
+    serviceAccount = require("./service-account.json");
+  }
 
   firebaseApp = initializeApp({ 
     credential: cert(serviceAccount),
     databaseURL: "https://steam-oto-default-rtdb.europe-west1.firebasedatabase.app"
   });
-  
-  console.log("✅ Firebase (Firestore & RTDB) başarıyla başlatıldı.");
+  console.log("✅ Firebase (ENV üzerinden) başarıyla başlatıldı.");
 } catch (e) {
   console.error("❌ Firebase başlatılamadı:", e.message);
   process.exit(1);
