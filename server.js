@@ -12,23 +12,22 @@ const { initializeApp, cert } = require("firebase-admin/app");
 const { getFirestore } = require("firebase-admin/firestore");
 
 // ── Firebase init ──────────────────────────────────────────────
+// ── Firebase init ──────────────────────────────────────────────
 let firebaseApp;
 try {
   let serviceAccount;
   const envVar = process.env.FIREBASE_SERVICE_ACCOUNT;
 
   if (envVar) {
-    // Railway'den gelen veriyi kontrol et
+    // Railway'den gelen veriyi kontrol et: { ile başlıyorsa düz JSON, değilse Base64
     if (envVar.trim().startsWith('{')) {
-      // Düz JSON ise (Hata alma riski yüksek olan yöntem)
       serviceAccount = JSON.parse(envVar);
     } else {
-      // Base64 formatı ise (En güvenli yöntem)
+      // Base64 formatını çöz
       const decoded = Buffer.from(envVar, 'base64').toString('utf-8');
       serviceAccount = JSON.parse(decoded);
     }
   } else {
-    // Yerel geliştirme için dosya kontrolü
     serviceAccount = require("./service-account.json");
   }
 
