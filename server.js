@@ -2,7 +2,7 @@
 // GameVault Backend — v4 (Firebase + fixes)
 // =============================================
 const express = require("express");
-const cors = require("cors");
+app.use(cors());
 const Imap = require("imap");
 const { simpleParser } = require("mailparser");
 const path = require("path");
