@@ -50,6 +50,7 @@ const C = {
   support:  () => db.collection("supportRequests"),
   settings: () => db.collection("settings").doc("site"),
   reviews:  () => db.collection("reviews"),
+  chat:     () => db.collection("liveChat"),
 };
 
 // ══════════════════════════════════════════════════
@@ -127,7 +128,9 @@ app.get("/api/popular-games", async (req, res) => {
   const games = snap.docs.map(d => {
     const { gmailPass, steamPass, steamUser, gmailUser, ...rest } = d.data();
     return { id: d.id, ...rest };
-  }).filter(g => g.popular).sort((a,b) => (a.popularOrder||99) - (b.popularOrder||99)).slice(0,6);
+  }).filter(g => g.popular)
+    .sort((a,b) => (a.popularOrder||99) - (b.popularOrder||99))
+    .slice(0,6);
   res.json({ success: true, games });
 });
 
@@ -154,54 +157,19 @@ app.post("/api/purchase", async (req, res) => {
 app.get("/api/my-purchases", async (req, res) => {
   const { username } = req.query;
   const snap = await C.purchases().where("username", "==", username).get();
-  const purchases = snap.docs.map(d => { const p = d.data(); return { id: d.id, gameName: p.gameName, gameEmoji: p.gameEmoji, steamUser: p.steamUser, steamPass: p.steamPass, purchasedAt: p.purchasedAt, steamCodeRequests: p.steamCodeRequests || 0, lastSteamCode: p.lastSteamCode || null }; })
-    .sort((a,b)=>(a.purchasedAt||"").localeCompare(b.purchasedAt||""));
+  const purchases = snap.docs
+    .map(d => { const p = d.data(); return { id: d.id, gameName: p.gameName, gameEmoji: p.gameEmoji, steamUser: p.steamUser, steamPass: p.steamPass, purchasedAt: p.purchasedAt, steamCodeRequests: p.steamCodeRequests || 0, lastSteamCode: p.lastSteamCode || null }; })
+    .sort((a,b) => (a.purchasedAt||"").localeCompare(b.purchasedAt||""));
   res.json({ success: true, purchases });
 });
 
 app.get("/api/recent-purchases", async (req, res) => {
   const snap = await C.purchases().get();
-  const purchases = snap.docs.map(d => { const p = d.data(); return { username: p.username ? p.username.substring(0,3)+"***" : "???", gameName: p.gameName, gameEmoji: p.gameEmoji || "🎮", purchasedAt: p.purchasedAt }; })
-    .sort((a,b)=>(b.purchasedAt||"").localeCompare(a.purchasedAt||"")).slice(0,30);
+  const purchases = snap.docs
+    .map(d => { const p = d.data(); return { username: p.username ? p.username.substring(0,3)+"***" : "???", gameName: p.gameName, gameEmoji: p.gameEmoji || "🎮", purchasedAt: p.purchasedAt }; })
+    .sort((a,b) => (b.purchasedAt||"").localeCompare(a.purchasedAt||""))
+    .slice(0,30);
   res.json({ success: true, purchases });
-});
-
-// ══════════════════════════════════════════════════
-// REVIEWS (Kullanıcı Yorumları)
-// ══════════════════════════════════════════════════
-
-app.get("/api/reviews", async (req, res) => {
-  const snap = await C.reviews().get();
-  const reviews = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-    .sort((a,b) => (a.order||99) - (b.order||99));
-  res.json({ success: true, reviews });
-});
-
-app.post("/api/admin/add-review", async (req, res) => {
-  const { adminKey, username, message, avatar, rating, order } = req.body;
-  if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
-  const ref = await C.reviews().add({ username: username||"Kullanıcı", message, avatar: avatar||"😊", rating: parseInt(rating)||5, order: parseInt(order)||99, createdAt: new Date().toISOString() });
-  res.json({ success: true, id: ref.id });
-});
-
-app.post("/api/admin/update-review", async (req, res) => {
-  const { adminKey, reviewId, username, message, avatar, rating, order } = req.body;
-  if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
-  const upd = {};
-  if (username !== undefined) upd.username = username;
-  if (message !== undefined) upd.message = message;
-  if (avatar !== undefined) upd.avatar = avatar;
-  if (rating !== undefined) upd.rating = parseInt(rating);
-  if (order !== undefined) upd.order = parseInt(order);
-  await C.reviews().doc(reviewId).update(upd);
-  res.json({ success: true });
-});
-
-app.post("/api/admin/delete-review", async (req, res) => {
-  const { adminKey, reviewId } = req.body;
-  if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
-  await C.reviews().doc(reviewId).delete();
-  res.json({ success: true });
 });
 
 // ══════════════════════════════════════════════════
@@ -244,7 +212,7 @@ app.get("/api/my-support", async (req, res) => {
   const { username } = req.query;
   const snap = await C.support().where("username", "==", username).get();
   const tickets = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-    .sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||""));
+    .sort((a,b) => (b.createdAt||"").localeCompare(a.createdAt||""));
   res.json({ success: true, tickets });
 });
 
@@ -257,7 +225,7 @@ app.post("/api/admin/get-games", async (req, res) => {
   if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
   const snap = await C.games().get();
   const games = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-    .sort((a,b)=>(a.createdAt||"").localeCompare(b.createdAt||""));
+    .sort((a,b) => (a.createdAt||"").localeCompare(b.createdAt||""));
   res.json({ success: true, games });
 });
 
@@ -269,16 +237,6 @@ app.post("/api/admin/add-game", upload.single("image"), async (req, res) => {
   await C.games().doc(id).set(gd);
   const { gmailPass: _gp, steamPass: _sp, ...safe } = gd;
   res.json({ success: true, message: "Oyun eklendi.", game: { id, ...safe } });
-});
-
-app.post("/api/admin/toggle-popular", async (req, res) => {
-  const { adminKey, gameId, popular, popularOrder } = req.body;
-  if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
-  const ref = C.games().doc(gameId);
-  const snap = await ref.get();
-  if (!snap.exists) return res.json({ success: false, message: "Oyun bulunamadı." });
-  await ref.update({ popular: !!popular, popularOrder: parseInt(popularOrder) || 99 });
-  res.json({ success: true });
 });
 
 app.post("/api/admin/edit-game", upload.single("image"), async (req, res) => {
@@ -319,7 +277,7 @@ app.post("/api/admin/get-codes", async (req, res) => {
   if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
   const snap = await C.codes().get();
   const codes = snap.docs.map(d => ({ code: d.id, ...d.data() }))
-    .sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||""));
+    .sort((a,b) => (b.createdAt||"").localeCompare(a.createdAt||""));
   res.json({ success: true, codes });
 });
 
@@ -360,8 +318,9 @@ app.post("/api/admin/get-purchases", async (req, res) => {
   const { adminKey } = req.body;
   if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
   const snap = await C.purchases().get();
-  const purchases = snap.docs.map(d => { const p = d.data(); return { id: d.id, username: p.username, gameName: p.gameName, gameEmoji: p.gameEmoji, purchasedAt: p.purchasedAt, steamCodeRequests: p.steamCodeRequests || 0 }; })
-    .sort((a,b)=>(b.purchasedAt||"").localeCompare(a.purchasedAt||""));
+  const purchases = snap.docs
+    .map(d => { const p = d.data(); return { id: d.id, username: p.username, gameName: p.gameName, gameEmoji: p.gameEmoji, purchasedAt: p.purchasedAt, steamCodeRequests: p.steamCodeRequests || 0 }; })
+    .sort((a,b) => (b.purchasedAt||"").localeCompare(a.purchasedAt||""));
   res.json({ success: true, purchases });
 });
 
@@ -388,7 +347,7 @@ app.post("/api/admin/get-support", async (req, res) => {
   if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
   const snap = await C.support().get();
   const requests = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-    .sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||""));
+    .sort((a,b) => (b.createdAt||"").localeCompare(a.createdAt||""));
   res.json({ success: true, requests });
 });
 
@@ -503,23 +462,148 @@ function fetchSteamCodeFromGmail(user, pass) {
 }
 
 function extractSteamCode(text) {
-  const patterns = [
-    /Steam Guard[^:]*?:\s*([A-Z0-9]{5})/i,
-    /your[^:]*?code[^:]*?:\s*([A-Z0-9]{5})/i,
-    /doğrulama kodu[^:]*?:\s*([A-Z0-9]{5})/i,
-    /access code[^:]*?:\s*([A-Z0-9]{5})/i,
-    // HTML tag'ler arasındaki 5 karakterlik blok (Steam HTML maili)
-    />([A-Z0-9]{5})</,
-    // Genel fallback: büyük harf/rakam 5 karakter
-    /\b([A-Z0-9]{5})\b/,
+  // Kesin Steam Guard pattern'leri
+  const strictPatterns = [
+    /Steam Guard Mobile Authenticator[^:]*?:\s*([A-Z0-9]{5})\b/i,
+    /Steam Guard[^:]*?:\s*([A-Z0-9]{5})\b/i,
+    /doğrulama kodu[^:]*?:\s*([A-Z0-9]{5})\b/i,
+    /verification code[^:]*?:\s*([A-Z0-9]{5})\b/i,
+    /access code[^:]*?:\s*([A-Z0-9]{5})\b/i,
+    /your code is[^:]*?:\s*([A-Z0-9]{5})\b/i,
+    /font-size:\s*\d+px[^>]*>([A-Z0-9]{5})<\/[a-z]+>/i,
+    /letter-spacing[^>]*>([A-Z0-9]{5})<\/[a-z]+>/i,
+    /\n\s*([A-Z0-9]{5})\s*\n/,
   ];
-  const skip = new Set(["STEAM","GUARD","LOGIN","EMAIL","GAMES","VALVE","STORE"]);
-  for (const pat of patterns) {
+  const skip = new Set([
+    "STEAM","GUARD","LOGIN","EMAIL","GAMES","VALVE","STORE",
+    "TALEP","DESTEK","HESAP","SATIN","ALIMI","OYUNU","OYNA",
+    "CLICK","HTTPS","HTTP","GMAIL","INBOX","HELLO","WORLD",
+    "TITLE","STYLE","CLASS","COLOR","WIDTH","ALIGN","TABLE",
+    "TBODY","THEAD","TFOOT","LABEL","INPUT","TOTAL","PRICE",
+    "ORDER","BONUS","EXTRA","POWER","ABOUT","AFTER","AGAIN",
+    "EVERY","FIRST","GREAT","GROUP","LARGE","PLACE","RIGHT",
+    "THEIR","THERE","THESE","THING","THOSE","THREE","UNDER",
+    "UNTIL","USING","WHERE","WHICH","WHILE","WHOLE","WHOSE",
+    "WOULD","COULD","FOUND","THINK","NOREPLY","SUPPORT",
+  ]);
+  for (const pat of strictPatterns) {
     const m = text.match(pat);
-    if (m && m[1] && !skip.has(m[1])) return m[1];
+    if (m && m[1] && !skip.has(m[1].toUpperCase())) return m[1].toUpperCase();
+  }
+  // Son çare: rakam içeren 5 karakter blok
+  const htmlMatch = text.match(/>([A-HJ-NP-Z2-9]{5})</);
+  if (htmlMatch && htmlMatch[1] && !skip.has(htmlMatch[1]) && /[0-9]/.test(htmlMatch[1])) {
+    return htmlMatch[1];
   }
   return null;
 }
+
+// ══════════════════════════════════════════════════
+// POPULAR TOGGLE
+// ══════════════════════════════════════════════════
+
+app.post("/api/admin/toggle-popular", async (req, res) => {
+  const { adminKey, gameId, popular, popularOrder } = req.body;
+  if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
+  const ref = C.games().doc(gameId);
+  const snap = await ref.get();
+  if (!snap.exists) return res.json({ success: false, message: "Oyun bulunamadı." });
+  await ref.update({ popular: !!popular, popularOrder: parseInt(popularOrder) || 99 });
+  res.json({ success: true });
+});
+
+// ══════════════════════════════════════════════════
+// REVIEWS
+// ══════════════════════════════════════════════════
+
+app.get("/api/reviews", async (req, res) => {
+  const snap = await C.reviews().get();
+  const reviews = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+    .sort((a,b) => (a.order||99) - (b.order||99));
+  res.json({ success: true, reviews });
+});
+
+app.post("/api/admin/add-review", async (req, res) => {
+  const { adminKey, username, message, avatar, rating, order } = req.body;
+  if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
+  if (!username || !message) return res.json({ success: false, message: "Ad ve mesaj zorunlu." });
+  const ref = await C.reviews().add({ username, message, avatar: avatar||"😊", rating: parseInt(rating)||5, order: parseInt(order)||99, createdAt: new Date().toISOString() });
+  res.json({ success: true, id: ref.id });
+});
+
+app.post("/api/admin/update-review", async (req, res) => {
+  const { adminKey, reviewId, username, message, avatar, rating, order } = req.body;
+  if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
+  const upd = {};
+  if (username !== undefined) upd.username = username;
+  if (message !== undefined) upd.message = message;
+  if (avatar !== undefined) upd.avatar = avatar;
+  if (rating !== undefined) upd.rating = parseInt(rating);
+  if (order !== undefined) upd.order = parseInt(order);
+  await C.reviews().doc(reviewId).update(upd);
+  res.json({ success: true });
+});
+
+app.post("/api/admin/delete-review", async (req, res) => {
+  const { adminKey, reviewId } = req.body;
+  if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
+  await C.reviews().doc(reviewId).delete();
+  res.json({ success: true });
+});
+
+// ══════════════════════════════════════════════════
+// CANLI DESTEK CHAT (Admin ↔ Kullanıcı)
+// ══════════════════════════════════════════════════
+
+// Kullanıcı mesaj gönderir
+app.post("/api/chat/send", async (req, res) => {
+  const { username, message, isAdmin, adminKey } = req.body;
+  if (!username || !message) return res.json({ success: false, message: "Eksik alan." });
+  if (isAdmin && adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
+  const chatId = username.toLowerCase();
+  await C.chat().doc(chatId).collection("messages").add({
+    text: message, sender: isAdmin ? "admin" : "user",
+    createdAt: new Date().toISOString(), read: false
+  });
+  // Okunmamış mesaj sayısını güncelle
+  const chatRef = C.chat().doc(chatId);
+  const chatSnap = await chatRef.get();
+  const cur = chatSnap.exists ? chatSnap.data() : {};
+  await chatRef.set({
+    username, lastMessage: message,
+    lastAt: new Date().toISOString(),
+    unreadUser: isAdmin ? (cur.unreadUser||0) + 1 : cur.unreadUser||0,
+    unreadAdmin: isAdmin ? cur.unreadAdmin||0 : (cur.unreadAdmin||0) + 1,
+  }, { merge: true });
+  res.json({ success: true });
+});
+
+// Mesajları getir
+app.get("/api/chat/messages", async (req, res) => {
+  const { username, adminKey } = req.query;
+  if (!username) return res.json({ success: false });
+  const chatId = username.toLowerCase();
+  const snap = await C.chat().doc(chatId).collection("messages").get();
+  const messages = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+    .sort((a,b) => (a.createdAt||"").localeCompare(b.createdAt||""));
+  // Admin okursa unreadAdmin sıfırla
+  if (adminKey === process.env.ADMIN_KEY) {
+    await C.chat().doc(chatId).set({ unreadAdmin: 0 }, { merge: true });
+  } else {
+    await C.chat().doc(chatId).set({ unreadUser: 0 }, { merge: true });
+  }
+  res.json({ success: true, messages });
+});
+
+// Tüm chatları listele (admin için)
+app.post("/api/admin/get-chats", async (req, res) => {
+  const { adminKey } = req.body;
+  if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
+  const snap = await C.chat().get();
+  const chats = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+    .sort((a,b) => (b.lastAt||"").localeCompare(a.lastAt||""));
+  res.json({ success: true, chats });
+});
 
 // ══════════════════════════════════════════════════
 app.listen(PORT, () => console.log(`✅ GameVault v4 aktif: Port ${PORT}`));
