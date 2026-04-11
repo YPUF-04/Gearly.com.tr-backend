@@ -591,51 +591,79 @@ app.post("/api/admin/delete-review", async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════
-// CANLI DESTEK CHAT (Admin ↔ Kullanıcı)
-// Strateji: lastAt endpoint'i tek bir doc okur (1 okuma).
-// Mesajları sadece lastAt değişince çeker → quota tasarrufu.
+// ══════════════════════════════════════════════════
+// CANLI DESTEK CHAT — SSE Push Sistemi
+// Polling YOK. Admin mesaj atınca SSE ile kullanıcıya push,
+// kullanıcı mesaj atınca admin sayfası kendi refresh eder.
+// Firestore okuma: sadece mesaj gönderilince + sayfa açılınca.
 // ══════════════════════════════════════════════════
 
-// Kullanıcı mesaj gönderir
+// SSE bağlantılarını tut: username → res
+const sseClients = new Map();
+
+// Kullanıcı SSE bağlantısı açar (polling yerine push alır)
+app.get("/api/chat/subscribe", (req, res) => {
+  const { username } = req.query;
+  if (!username) return res.status(400).end();
+
+  res.set({
+    "Content-Type":      "text/event-stream",
+    "Cache-Control":     "no-cache",
+    "Connection":        "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+  res.flushHeaders();
+
+  const id = username.toLowerCase();
+  sseClients.set(id, res);
+
+  req.on("close", () => sseClients.delete(id));
+
+  // Railway/proxy için 25sn'de bir boş satır gönder (bağlantı kopmaz)
+  const keepAlive = setInterval(() => {
+    if (res.writableEnded) { clearInterval(keepAlive); return; }
+    res.write(": ping\n\n");
+  }, 25000);
+});
+
+// Mesaj gönder (kullanıcı veya admin)
 app.post("/api/chat/send", async (req, res) => {
   const { username, message, isAdmin, adminKey } = req.body;
   if (!username || !message) return res.json({ success: false, message: "Eksik alan." });
   if (isAdmin && adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
+
   const chatId = username.toLowerCase();
   const now = new Date().toISOString();
+
   await C.chat().doc(chatId).collection("messages").add({
-    text: message, sender: isAdmin ? "admin" : "user",
-    createdAt: now, read: false
+    text: message, sender: isAdmin ? "admin" : "user", createdAt: now, read: false
   });
   const chatRef = C.chat().doc(chatId);
   const chatSnap = await chatRef.get();
   const cur = chatSnap.exists ? chatSnap.data() : {};
   await chatRef.set({
     username, lastMessage: message, lastAt: now,
-    unreadUser:  isAdmin ? (cur.unreadUser||0) + 1 : cur.unreadUser||0,
-    unreadAdmin: isAdmin ? cur.unreadAdmin||0 : (cur.unreadAdmin||0) + 1,
+    unreadUser:  isAdmin ? (cur.unreadUser||0) + 1 : (cur.unreadUser||0),
+    unreadAdmin: isAdmin ? (cur.unreadAdmin||0) : (cur.unreadAdmin||0) + 1,
   }, { merge: true });
+
+  // Admin mesaj attıysa → kullanıcının açık SSE bağlantısına push
+  if (isAdmin) {
+    const client = sseClients.get(chatId);
+    if (client && !client.writableEnded) {
+      client.write(`data: ${JSON.stringify({ text: message, sender: "admin", createdAt: now })}\n\n`);
+    }
+  }
+
   res.json({ success: true, lastAt: now });
 });
 
-// Sadece lastAt döner — 1 Firestore okuma, polling için ideal
-app.get("/api/chat/ping", async (req, res) => {
-  const { username } = req.query;
-  if (!username) return res.json({ success: false });
-  const rlKey = `chat-ping-${username.toLowerCase()}`;
-  if (rateLimit(rlKey, 30)) return res.json({ success: false, message: "Çok fazla istek." });
-  const snap = await C.chat().doc(username.toLowerCase()).get();
-  if (!snap.exists) return res.json({ success: true, lastAt: null, unreadUser: 0 });
-  const d = snap.data();
-  res.json({ success: true, lastAt: d.lastAt || null, unreadUser: d.unreadUser || 0 });
-});
-
-// Mesajları getir (sadece lastAt değişince çağrılır)
+// Mesajları getir (sayfa açılınca 1 kez çağrılır)
 app.get("/api/chat/messages", async (req, res) => {
   const { username, adminKey } = req.query;
   if (!username) return res.json({ success: false });
   const rlKey = `chat-msg-${username.toLowerCase()}`;
-  if (rateLimit(rlKey, 15)) return res.json({ success: false, message: "Çok fazla istek." });
+  if (rateLimit(rlKey, 10)) return res.json({ success: false, message: "Çok fazla istek." });
   const chatId = username.toLowerCase();
   const snap = await C.chat().doc(chatId).collection("messages").get();
   const messages = snap.docs.map(d => ({ id: d.id, ...d.data() }))
@@ -648,7 +676,7 @@ app.get("/api/chat/messages", async (req, res) => {
   res.json({ success: true, messages });
 });
 
-// Tüm chatları listele (admin için)
+// Tüm chatları listele (admin)
 app.post("/api/admin/get-chats", async (req, res) => {
   const { adminKey } = req.body;
   if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
