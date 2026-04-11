@@ -41,6 +41,30 @@ const storage = multer.diskStorage({
 const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } });
 app.use("/uploads", express.static(UPLOAD_DIR));
 
+// ── In-memory cache — Firestore okuma sayısını azaltır ──────────
+const cache = new Map();
+function cacheGet(key) {
+  const entry = cache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.exp) { cache.delete(key); return null; }
+  return entry.val;
+}
+function cacheSet(key, val, ttlMs) {
+  cache.set(key, { val, exp: Date.now() + ttlMs });
+}
+
+// ── Basit rate limiter (chat endpoint için) ─────────────────────
+const rateLimitMap = new Map();
+function rateLimit(key, maxPerMin) {
+  const now = Date.now();
+  const windowMs = 60_000;
+  const entry = rateLimitMap.get(key) || { count: 0, start: now };
+  if (now - entry.start > windowMs) { entry.count = 0; entry.start = now; }
+  entry.count++;
+  rateLimitMap.set(key, entry);
+  return entry.count > maxPerMin;
+}
+
 // Koleksiyon referansları
 const C = {
   users:    () => db.collection("users"),
@@ -81,13 +105,17 @@ app.post("/api/login", async (req, res) => {
 // ══════════════════════════════════════════════════
 
 app.get("/api/stats", async (req, res) => {
+  const cached = cacheGet("stats");
+  if (cached) return res.json(cached);
   const [usersSnap, gamesSnap, settingsSnap] = await Promise.all([
     C.users().count().get(),
     C.games().count().get(),
     C.settings().get(),
   ]);
   const s = settingsSnap.exists ? settingsSnap.data() : {};
-  res.json({ success: true, userCount: usersSnap.data().count, gameCount: gamesSnap.data().count, rating: s.rating ?? 5, serverStatus: s.serverStatus ?? true });
+  const result = { success: true, userCount: usersSnap.data().count, gameCount: gamesSnap.data().count, rating: s.rating ?? 5, serverStatus: s.serverStatus ?? true };
+  cacheSet("stats", result, 30_000); // 30 saniye cache
+  res.json(result);
 });
 
 // ══════════════════════════════════════════════════
@@ -115,15 +143,21 @@ app.post("/api/redeem-code", async (req, res) => {
 // ══════════════════════════════════════════════════
 
 app.get("/api/games", async (req, res) => {
+  const cached = cacheGet("games");
+  if (cached) return res.json(cached);
   const snap = await C.games().get();
   const games = snap.docs.map(d => {
     const { gmailPass, steamPass, steamUser, gmailUser, ...rest } = d.data();
     return { id: d.id, ...rest };
   }).sort((a,b) => (a.createdAt||"").localeCompare(b.createdAt||""));
-  res.json({ success: true, games });
+  const result = { success: true, games };
+  cacheSet("games", result, 60_000); // 60 saniye cache
+  res.json(result);
 });
 
 app.get("/api/popular-games", async (req, res) => {
+  const cached = cacheGet("popular-games");
+  if (cached) return res.json(cached);
   const snap = await C.games().get();
   const games = snap.docs.map(d => {
     const { gmailPass, steamPass, steamUser, gmailUser, ...rest } = d.data();
@@ -131,7 +165,9 @@ app.get("/api/popular-games", async (req, res) => {
   }).filter(g => g.popular)
     .sort((a,b) => (a.popularOrder||99) - (b.popularOrder||99))
     .slice(0,6);
-  res.json({ success: true, games });
+  const result = { success: true, games };
+  cacheSet("popular-games", result, 60_000);
+  res.json(result);
 });
 
 // ══════════════════════════════════════════════════
@@ -235,6 +271,7 @@ app.post("/api/admin/add-game", upload.single("image"), async (req, res) => {
   const id = Date.now().toString();
   const gd = { name: gameName, steamUser, steamPass, gmailUser, gmailPass, emoji: emoji || "🎮", platform: platform || "PC / Steam", price: price || "Hesap", image: req.file ? `/uploads/${req.file.filename}` : null, createdAt: new Date().toISOString() };
   await C.games().doc(id).set(gd);
+  cache.delete("games"); cache.delete("popular-games"); // cache temizle
   const { gmailPass: _gp, steamPass: _sp, ...safe } = gd;
   res.json({ success: true, message: "Oyun eklendi.", game: { id, ...safe } });
 });
@@ -251,6 +288,7 @@ app.post("/api/admin/edit-game", upload.single("image"), async (req, res) => {
   if (price) upd.price = price; if (emoji) upd.emoji = emoji;
   if (req.file) upd.image = `/uploads/${req.file.filename}`;
   await C.games().doc(gameId).update(upd);
+  cache.delete("games"); cache.delete("popular-games");
   res.json({ success: true, message: "Oyun güncellendi." });
 });
 
@@ -258,6 +296,7 @@ app.post("/api/admin/delete-game", async (req, res) => {
   const { adminKey, gameId } = req.body;
   if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
   await C.games().doc(gameId).delete();
+  cache.delete("games"); cache.delete("popular-games");
   res.json({ success: true });
 });
 
@@ -553,6 +592,8 @@ app.post("/api/admin/delete-review", async (req, res) => {
 
 // ══════════════════════════════════════════════════
 // CANLI DESTEK CHAT (Admin ↔ Kullanıcı)
+// Strateji: lastAt endpoint'i tek bir doc okur (1 okuma).
+// Mesajları sadece lastAt değişince çeker → quota tasarrufu.
 // ══════════════════════════════════════════════════
 
 // Kullanıcı mesaj gönderir
@@ -561,32 +602,44 @@ app.post("/api/chat/send", async (req, res) => {
   if (!username || !message) return res.json({ success: false, message: "Eksik alan." });
   if (isAdmin && adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
   const chatId = username.toLowerCase();
+  const now = new Date().toISOString();
   await C.chat().doc(chatId).collection("messages").add({
     text: message, sender: isAdmin ? "admin" : "user",
-    createdAt: new Date().toISOString(), read: false
+    createdAt: now, read: false
   });
-  // Okunmamış mesaj sayısını güncelle
   const chatRef = C.chat().doc(chatId);
   const chatSnap = await chatRef.get();
   const cur = chatSnap.exists ? chatSnap.data() : {};
   await chatRef.set({
-    username, lastMessage: message,
-    lastAt: new Date().toISOString(),
-    unreadUser: isAdmin ? (cur.unreadUser||0) + 1 : cur.unreadUser||0,
+    username, lastMessage: message, lastAt: now,
+    unreadUser:  isAdmin ? (cur.unreadUser||0) + 1 : cur.unreadUser||0,
     unreadAdmin: isAdmin ? cur.unreadAdmin||0 : (cur.unreadAdmin||0) + 1,
   }, { merge: true });
-  res.json({ success: true });
+  res.json({ success: true, lastAt: now });
 });
 
-// Mesajları getir
+// Sadece lastAt döner — 1 Firestore okuma, polling için ideal
+app.get("/api/chat/ping", async (req, res) => {
+  const { username } = req.query;
+  if (!username) return res.json({ success: false });
+  const rlKey = `chat-ping-${username.toLowerCase()}`;
+  if (rateLimit(rlKey, 30)) return res.json({ success: false, message: "Çok fazla istek." });
+  const snap = await C.chat().doc(username.toLowerCase()).get();
+  if (!snap.exists) return res.json({ success: true, lastAt: null, unreadUser: 0 });
+  const d = snap.data();
+  res.json({ success: true, lastAt: d.lastAt || null, unreadUser: d.unreadUser || 0 });
+});
+
+// Mesajları getir (sadece lastAt değişince çağrılır)
 app.get("/api/chat/messages", async (req, res) => {
   const { username, adminKey } = req.query;
   if (!username) return res.json({ success: false });
+  const rlKey = `chat-msg-${username.toLowerCase()}`;
+  if (rateLimit(rlKey, 15)) return res.json({ success: false, message: "Çok fazla istek." });
   const chatId = username.toLowerCase();
   const snap = await C.chat().doc(chatId).collection("messages").get();
   const messages = snap.docs.map(d => ({ id: d.id, ...d.data() }))
     .sort((a,b) => (a.createdAt||"").localeCompare(b.createdAt||""));
-  // Admin okursa unreadAdmin sıfırla
   if (adminKey === process.env.ADMIN_KEY) {
     await C.chat().doc(chatId).set({ unreadAdmin: 0 }, { merge: true });
   } else {
