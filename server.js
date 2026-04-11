@@ -598,14 +598,18 @@ app.post("/api/admin/delete-review", async (req, res) => {
 // Firestore okuma: sadece mesaj gönderilince + sayfa açılınca.
 // ══════════════════════════════════════════════════
 
-// SSE bağlantılarını tut: username → res
-const sseClients = new Map();
+// SSE bağlantıları — kullanıcı ve admin ayrı Map'lerde
+const sseUsers  = new Map(); // username → kullanıcı tarayıcısı
+const sseAdmins = new Map(); // username → admin tarayıcısı
 
-// Kullanıcı SSE bağlantısı açar (polling yerine push alır)
-app.get("/api/chat/subscribe", (req, res) => {
-  const { username } = req.query;
-  if (!username) return res.status(400).end();
+function ssePush(map, key, data) {
+  const client = map.get(key);
+  if (client && !client.writableEnded) {
+    client.write(`data: ${JSON.stringify(data)}\n\n`);
+  }
+}
 
+function sseSetup(res, map, key) {
   res.set({
     "Content-Type":      "text/event-stream",
     "Cache-Control":     "no-cache",
@@ -613,46 +617,58 @@ app.get("/api/chat/subscribe", (req, res) => {
     "X-Accel-Buffering": "no",
   });
   res.flushHeaders();
-
-  const id = username.toLowerCase();
-  sseClients.set(id, res);
-
-  req.on("close", () => sseClients.delete(id));
-
-  // Railway/proxy için 25sn'de bir boş satır gönder (bağlantı kopmaz)
-  const keepAlive = setInterval(() => {
-    if (res.writableEnded) { clearInterval(keepAlive); return; }
+  map.set(key, res);
+  const ka = setInterval(() => {
+    if (res.writableEnded) { clearInterval(ka); return; }
     res.write(": ping\n\n");
   }, 25000);
+  return ka;
+}
+
+// Kullanıcı SSE bağlantısı (admin mesajlarını push alır)
+app.get("/api/chat/subscribe", (req, res) => {
+  const { username } = req.query;
+  if (!username) return res.status(400).end();
+  const id = username.toLowerCase();
+  const ka = sseSetup(res, sseUsers, id);
+  req.on("close", () => { sseUsers.delete(id); clearInterval(ka); });
 });
 
-// Mesaj gönder (kullanıcı veya admin)
+// Admin SSE bağlantısı (kullanıcı mesajlarını push alır)
+app.get("/api/chat/subscribe-admin", (req, res) => {
+  const { username, adminKey } = req.query;
+  if (!username || adminKey !== process.env.ADMIN_KEY) return res.status(403).end();
+  const id = username.toLowerCase();
+  const ka = sseSetup(res, sseAdmins, id);
+  req.on("close", () => { sseAdmins.delete(id); clearInterval(ka); });
+});
+
+// Mesaj gönder — her iki tarafa da push at
 app.post("/api/chat/send", async (req, res) => {
   const { username, message, isAdmin, adminKey } = req.body;
   if (!username || !message) return res.json({ success: false, message: "Eksik alan." });
   if (isAdmin && adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
 
   const chatId = username.toLowerCase();
-  const now = new Date().toISOString();
+  const now    = new Date().toISOString();
+  const msgObj = { text: message, sender: isAdmin ? "admin" : "user", createdAt: now };
 
-  await C.chat().doc(chatId).collection("messages").add({
-    text: message, sender: isAdmin ? "admin" : "user", createdAt: now, read: false
-  });
-  const chatRef = C.chat().doc(chatId);
+  await C.chat().doc(chatId).collection("messages").add({ ...msgObj, read: false });
+  const chatRef  = C.chat().doc(chatId);
   const chatSnap = await chatRef.get();
-  const cur = chatSnap.exists ? chatSnap.data() : {};
+  const cur      = chatSnap.exists ? chatSnap.data() : {};
   await chatRef.set({
     username, lastMessage: message, lastAt: now,
     unreadUser:  isAdmin ? (cur.unreadUser||0) + 1 : (cur.unreadUser||0),
     unreadAdmin: isAdmin ? (cur.unreadAdmin||0) : (cur.unreadAdmin||0) + 1,
   }, { merge: true });
 
-  // Admin mesaj attıysa → kullanıcının açık SSE bağlantısına push
   if (isAdmin) {
-    const client = sseClients.get(chatId);
-    if (client && !client.writableEnded) {
-      client.write(`data: ${JSON.stringify({ text: message, sender: "admin", createdAt: now })}\n\n`);
-    }
+    // Admin yazdı → kullanıcıya push
+    ssePush(sseUsers, chatId, msgObj);
+  } else {
+    // Kullanıcı yazdı → admin'e push
+    ssePush(sseAdmins, chatId, msgObj);
   }
 
   res.json({ success: true, lastAt: now });
