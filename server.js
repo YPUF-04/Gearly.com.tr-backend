@@ -18,6 +18,12 @@ cloudinary.config({
   api_key:    process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
+const CLOUDINARY_OK = !!(
+  process.env.CLOUDINARY_CLOUD_NAME &&
+  process.env.CLOUDINARY_API_KEY &&
+  process.env.CLOUDINARY_API_SECRET
+);
+if (!CLOUDINARY_OK) console.warn("⚠️  Cloudinary env variables eksik — fotoğraf yükleme devre dışı.");
 
 // ── Firebase init ──────────────────────────────────────────────
 let firebaseApp;
@@ -48,12 +54,21 @@ const upload = multer({
 
 // Cloudinary'e yükle ve URL döndür
 async function uploadToCloudinary(buffer, mimetype) {
+  if (!CLOUDINARY_OK) throw new Error("Cloudinary yapılandırılmamış. Railway'de CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET env variable'larını ekle.");
   return new Promise((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(
-      { folder: "gamevault", resource_type: "image" },
+      {
+        folder: "gamevault",
+        resource_type: "image",
+        transformation: [{ quality: "auto", fetch_format: "auto" }]
+      },
       (err, result) => {
         if (err) reject(err);
-        else resolve(result.secure_url);
+        else {
+          // Temiz URL — transformation olmadan, sadece public_id + format
+          const cleanUrl = `https://res.cloudinary.com/${result.cloud_name}/image/upload/${result.public_id}.${result.format || 'jpg'}`;
+          resolve(cleanUrl);
+        }
       }
     );
     stream.end(buffer);
@@ -254,8 +269,12 @@ app.post("/api/admin/add-game", upload.single("image"), async (req, res) => {
   const id = Date.now().toString();
   let imageUrl = null;
   if (req.file) {
-    try { imageUrl = await uploadToCloudinary(req.file.buffer, req.file.mimetype); }
-    catch(e) { console.error("Cloudinary hatası:", e.message); }
+    try {
+      imageUrl = await uploadToCloudinary(req.file.buffer, req.file.mimetype);
+    } catch(e) {
+      console.error("Cloudinary hatası:", e.message);
+      return res.json({ success: false, message: "Fotoğraf yüklenemedi: " + e.message });
+    }
   }
   const gd = { name: gameName, steamUser, steamPass, gmailUser, gmailPass, emoji: emoji || "🎮", platform: platform || "PC / Steam", price: price || "Hesap", image: imageUrl, requiresCode: req.body.requiresCode !== "false", createdAt: new Date().toISOString() };
   await C.games().doc(id).set(gd);
