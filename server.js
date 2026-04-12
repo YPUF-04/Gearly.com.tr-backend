@@ -11,6 +11,14 @@ const fs = require("fs");
 const { initializeApp, cert } = require("firebase-admin/app");
 const { getFirestore } = require("firebase-admin/firestore");
 
+// ── Cloudinary (resim depolama) ────────────────────────────────
+const cloudinary = require("cloudinary").v2;
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key:    process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
+
 // ── Firebase init ──────────────────────────────────────────────
 let firebaseApp;
 try {
@@ -31,38 +39,25 @@ app.use(cors({ origin: "*", methods: ["GET","POST","PUT","DELETE"], allowedHeade
 app.use(express.json({ limit: "10mb" }));
 
 const PORT = process.env.PORT || 3000;
-const UPLOAD_DIR = path.join(__dirname, "uploads");
-if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR);
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, UPLOAD_DIR),
-  filename:    (req, file, cb) => cb(null, `game_${Date.now()}${path.extname(file.originalname)}`),
+// Multer: diske değil belleğe al, oradan Cloudinary'e yükle
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }
 });
-const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } });
-app.use("/uploads", express.static(UPLOAD_DIR));
 
-// ── In-memory cache — Firestore okuma sayısını azaltır ──────────
-const cache = new Map();
-function cacheGet(key) {
-  const entry = cache.get(key);
-  if (!entry) return null;
-  if (Date.now() > entry.exp) { cache.delete(key); return null; }
-  return entry.val;
-}
-function cacheSet(key, val, ttlMs) {
-  cache.set(key, { val, exp: Date.now() + ttlMs });
-}
-
-// ── Basit rate limiter (chat endpoint için) ─────────────────────
-const rateLimitMap = new Map();
-function rateLimit(key, maxPerMin) {
-  const now = Date.now();
-  const windowMs = 60_000;
-  const entry = rateLimitMap.get(key) || { count: 0, start: now };
-  if (now - entry.start > windowMs) { entry.count = 0; entry.start = now; }
-  entry.count++;
-  rateLimitMap.set(key, entry);
-  return entry.count > maxPerMin;
+// Cloudinary'e yükle ve URL döndür
+async function uploadToCloudinary(buffer, mimetype) {
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      { folder: "gamevault", resource_type: "image" },
+      (err, result) => {
+        if (err) reject(err);
+        else resolve(result.secure_url);
+      }
+    );
+    stream.end(buffer);
+  });
 }
 
 // Koleksiyon referansları
@@ -105,17 +100,13 @@ app.post("/api/login", async (req, res) => {
 // ══════════════════════════════════════════════════
 
 app.get("/api/stats", async (req, res) => {
-  const cached = cacheGet("stats");
-  if (cached) return res.json(cached);
   const [usersSnap, gamesSnap, settingsSnap] = await Promise.all([
     C.users().count().get(),
     C.games().count().get(),
     C.settings().get(),
   ]);
   const s = settingsSnap.exists ? settingsSnap.data() : {};
-  const result = { success: true, userCount: usersSnap.data().count, gameCount: gamesSnap.data().count, rating: s.rating ?? 5, serverStatus: s.serverStatus ?? true };
-  cacheSet("stats", result, 30_000); // 30 saniye cache
-  res.json(result);
+  res.json({ success: true, userCount: usersSnap.data().count, gameCount: gamesSnap.data().count, rating: s.rating ?? 5, serverStatus: s.serverStatus ?? true });
 });
 
 // ══════════════════════════════════════════════════
@@ -143,21 +134,15 @@ app.post("/api/redeem-code", async (req, res) => {
 // ══════════════════════════════════════════════════
 
 app.get("/api/games", async (req, res) => {
-  const cached = cacheGet("games");
-  if (cached) return res.json(cached);
   const snap = await C.games().get();
   const games = snap.docs.map(d => {
     const { gmailPass, steamPass, steamUser, gmailUser, ...rest } = d.data();
     return { id: d.id, ...rest };
   }).sort((a,b) => (a.createdAt||"").localeCompare(b.createdAt||""));
-  const result = { success: true, games };
-  cacheSet("games", result, 60_000); // 60 saniye cache
-  res.json(result);
+  res.json({ success: true, games });
 });
 
 app.get("/api/popular-games", async (req, res) => {
-  const cached = cacheGet("popular-games");
-  if (cached) return res.json(cached);
   const snap = await C.games().get();
   const games = snap.docs.map(d => {
     const { gmailPass, steamPass, steamUser, gmailUser, ...rest } = d.data();
@@ -165,9 +150,7 @@ app.get("/api/popular-games", async (req, res) => {
   }).filter(g => g.popular)
     .sort((a,b) => (a.popularOrder||99) - (b.popularOrder||99))
     .slice(0,6);
-  const result = { success: true, games };
-  cacheSet("popular-games", result, 60_000);
-  res.json(result);
+  res.json({ success: true, games });
 });
 
 // ══════════════════════════════════════════════════
@@ -269,9 +252,14 @@ app.post("/api/admin/add-game", upload.single("image"), async (req, res) => {
   const { adminKey, gameName, steamUser, steamPass, gmailUser, gmailPass, platform, price, emoji } = req.body;
   if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
   const id = Date.now().toString();
-  const gd = { name: gameName, steamUser, steamPass, gmailUser, gmailPass, emoji: emoji || "🎮", platform: platform || "PC / Steam", price: price || "Hesap", image: req.file ? `/uploads/${req.file.filename}` : null, createdAt: new Date().toISOString() };
+  let imageUrl = null;
+  if (req.file) {
+    try { imageUrl = await uploadToCloudinary(req.file.buffer, req.file.mimetype); }
+    catch(e) { console.error("Cloudinary hatası:", e.message); }
+  }
+  const gd = { name: gameName, steamUser, steamPass, gmailUser, gmailPass, emoji: emoji || "🎮", platform: platform || "PC / Steam", price: price || "Hesap", image: imageUrl, createdAt: new Date().toISOString() };
   await C.games().doc(id).set(gd);
-  cache.delete("games"); cache.delete("popular-games"); // cache temizle
+  cache.delete("games"); cache.delete("popular-games");
   const { gmailPass: _gp, steamPass: _sp, ...safe } = gd;
   res.json({ success: true, message: "Oyun eklendi.", game: { id, ...safe } });
 });
@@ -286,7 +274,10 @@ app.post("/api/admin/edit-game", upload.single("image"), async (req, res) => {
   if (steamPass) upd.steamPass = steamPass; if (gmailUser) upd.gmailUser = gmailUser;
   if (gmailPass) upd.gmailPass = gmailPass; if (platform) upd.platform = platform;
   if (price) upd.price = price; if (emoji) upd.emoji = emoji;
-  if (req.file) upd.image = `/uploads/${req.file.filename}`;
+  if (req.file) {
+    try { upd.image = await uploadToCloudinary(req.file.buffer, req.file.mimetype); }
+    catch(e) { console.error("Cloudinary hatası:", e.message); }
+  }
   await C.games().doc(gameId).update(upd);
   cache.delete("games"); cache.delete("popular-games");
   res.json({ success: true, message: "Oyun güncellendi." });
@@ -296,7 +287,6 @@ app.post("/api/admin/delete-game", async (req, res) => {
   const { adminKey, gameId } = req.body;
   if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
   await C.games().doc(gameId).delete();
-  cache.delete("games"); cache.delete("popular-games");
   res.json({ success: true });
 });
 
@@ -591,99 +581,41 @@ app.post("/api/admin/delete-review", async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════
-// ══════════════════════════════════════════════════
-// CANLI DESTEK CHAT — SSE Push Sistemi
-// Polling YOK. Admin mesaj atınca SSE ile kullanıcıya push,
-// kullanıcı mesaj atınca admin sayfası kendi refresh eder.
-// Firestore okuma: sadece mesaj gönderilince + sayfa açılınca.
+// CANLI DESTEK CHAT (Admin ↔ Kullanıcı)
 // ══════════════════════════════════════════════════
 
-// SSE bağlantıları — kullanıcı ve admin ayrı Map'lerde
-const sseUsers  = new Map(); // username → kullanıcı tarayıcısı
-const sseAdmins = new Map(); // username → admin tarayıcısı
-
-function ssePush(map, key, data) {
-  const client = map.get(key);
-  if (client && !client.writableEnded) {
-    client.write(`data: ${JSON.stringify(data)}\n\n`);
-  }
-}
-
-function sseSetup(res, map, key) {
-  res.set({
-    "Content-Type":      "text/event-stream",
-    "Cache-Control":     "no-cache",
-    "Connection":        "keep-alive",
-    "X-Accel-Buffering": "no",
-  });
-  res.flushHeaders();
-  map.set(key, res);
-  const ka = setInterval(() => {
-    if (res.writableEnded) { clearInterval(ka); return; }
-    res.write(": ping\n\n");
-  }, 25000);
-  return ka;
-}
-
-// Kullanıcı SSE bağlantısı (admin mesajlarını push alır)
-app.get("/api/chat/subscribe", (req, res) => {
-  const { username } = req.query;
-  if (!username) return res.status(400).end();
-  const id = username.toLowerCase();
-  const ka = sseSetup(res, sseUsers, id);
-  req.on("close", () => { sseUsers.delete(id); clearInterval(ka); });
-});
-
-// Admin SSE bağlantısı (kullanıcı mesajlarını push alır)
-app.get("/api/chat/subscribe-admin", (req, res) => {
-  const { username, adminKey } = req.query;
-  if (!username || adminKey !== process.env.ADMIN_KEY) return res.status(403).end();
-  const id = username.toLowerCase();
-  const ka = sseSetup(res, sseAdmins, id);
-  req.on("close", () => { sseAdmins.delete(id); clearInterval(ka); });
-});
-
-// Mesaj gönder — her iki tarafa da push at
+// Kullanıcı mesaj gönderir
 app.post("/api/chat/send", async (req, res) => {
   const { username, message, isAdmin, adminKey } = req.body;
   if (!username || !message) return res.json({ success: false, message: "Eksik alan." });
   if (isAdmin && adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
-
   const chatId = username.toLowerCase();
-  const now    = new Date().toISOString();
-  const msgObj = { text: message, sender: isAdmin ? "admin" : "user", createdAt: now };
-
-  await C.chat().doc(chatId).collection("messages").add({ ...msgObj, read: false });
-  const chatRef  = C.chat().doc(chatId);
+  await C.chat().doc(chatId).collection("messages").add({
+    text: message, sender: isAdmin ? "admin" : "user",
+    createdAt: new Date().toISOString(), read: false
+  });
+  // Okunmamış mesaj sayısını güncelle
+  const chatRef = C.chat().doc(chatId);
   const chatSnap = await chatRef.get();
-  const cur      = chatSnap.exists ? chatSnap.data() : {};
+  const cur = chatSnap.exists ? chatSnap.data() : {};
   await chatRef.set({
-    username, lastMessage: message, lastAt: now,
-    unreadUser:  isAdmin ? (cur.unreadUser||0) + 1 : (cur.unreadUser||0),
-    unreadAdmin: isAdmin ? (cur.unreadAdmin||0) : (cur.unreadAdmin||0) + 1,
+    username, lastMessage: message,
+    lastAt: new Date().toISOString(),
+    unreadUser: isAdmin ? (cur.unreadUser||0) + 1 : cur.unreadUser||0,
+    unreadAdmin: isAdmin ? cur.unreadAdmin||0 : (cur.unreadAdmin||0) + 1,
   }, { merge: true });
-
-  if (isAdmin) {
-    // Admin yazdı → kullanıcıya push
-    ssePush(sseUsers, chatId, msgObj);
-  } else {
-    // Kullanıcı yazdı → admin'e push
-    ssePush(sseAdmins, chatId, msgObj);
-  }
-
-  res.json({ success: true, lastAt: now });
+  res.json({ success: true });
 });
 
-// Mesajları getir (sayfa açılınca 1 kez çağrılır)
+// Mesajları getir
 app.get("/api/chat/messages", async (req, res) => {
   const { username, adminKey } = req.query;
   if (!username) return res.json({ success: false });
-  const rlKey = `chat-msg-${username.toLowerCase()}`;
-  if (rateLimit(rlKey, 10)) return res.json({ success: false, message: "Çok fazla istek." });
   const chatId = username.toLowerCase();
   const snap = await C.chat().doc(chatId).collection("messages").get();
   const messages = snap.docs.map(d => ({ id: d.id, ...d.data() }))
     .sort((a,b) => (a.createdAt||"").localeCompare(b.createdAt||""));
+  // Admin okursa unreadAdmin sıfırla
   if (adminKey === process.env.ADMIN_KEY) {
     await C.chat().doc(chatId).set({ unreadAdmin: 0 }, { merge: true });
   } else {
@@ -692,7 +624,7 @@ app.get("/api/chat/messages", async (req, res) => {
   res.json({ success: true, messages });
 });
 
-// Tüm chatları listele (admin)
+// Tüm chatları listele (admin için)
 app.post("/api/admin/get-chats", async (req, res) => {
   const { adminKey } = req.body;
   if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
