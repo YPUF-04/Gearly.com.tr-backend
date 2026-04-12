@@ -168,9 +168,9 @@ app.post("/api/purchase", async (req, res) => {
   const pid = Date.now().toString();
   await Promise.all([
     C.users().doc(key).update({ balance: u.balance - 1 }),
-    C.purchases().doc(pid).set({ username, gameId, gameName: g.name, gameEmoji: g.emoji || "🎮", steamUser: g.steamUser, steamPass: g.steamPass, gmailUser: g.gmailUser, gmailPass: g.gmailPass, purchasedAt: new Date().toISOString(), steamCodeRequests: 0, lastSteamCode: null }),
+    C.purchases().doc(pid).set({ username, gameId, gameName: g.name, gameEmoji: g.emoji || "🎮", steamUser: g.steamUser, steamPass: g.steamPass, gmailUser: g.gmailUser, gmailPass: g.gmailPass, purchasedAt: new Date().toISOString(), steamCodeRequests: 0, lastSteamCode: null, requiresCode: g.requiresCode !== false }),
   ]);
-  res.json({ success: true, purchaseId: pid, balance: u.balance - 1, gameName: g.name, steamUser: g.steamUser, steamPass: g.steamPass });
+  res.json({ success: true, purchaseId: pid, balance: u.balance - 1, gameName: g.name, steamUser: g.steamUser, steamPass: g.steamPass, requiresCode: g.requiresCode !== false });
 });
 
 app.get("/api/my-purchases", async (req, res) => {
@@ -257,7 +257,7 @@ app.post("/api/admin/add-game", upload.single("image"), async (req, res) => {
     try { imageUrl = await uploadToCloudinary(req.file.buffer, req.file.mimetype); }
     catch(e) { console.error("Cloudinary hatası:", e.message); }
   }
-  const gd = { name: gameName, steamUser, steamPass, gmailUser, gmailPass, emoji: emoji || "🎮", platform: platform || "PC / Steam", price: price || "Hesap", image: imageUrl, createdAt: new Date().toISOString() };
+  const gd = { name: gameName, steamUser, steamPass, gmailUser, gmailPass, emoji: emoji || "🎮", platform: platform || "PC / Steam", price: price || "Hesap", image: imageUrl, requiresCode: req.body.requiresCode !== "false", createdAt: new Date().toISOString() };
   await C.games().doc(id).set(gd);
   cache.delete("games"); cache.delete("popular-games");
   const { gmailPass: _gp, steamPass: _sp, ...safe } = gd;
@@ -270,10 +270,15 @@ app.post("/api/admin/edit-game", upload.single("image"), async (req, res) => {
   const snap = await C.games().doc(gameId).get();
   if (!snap.exists) return res.json({ success: false, message: "Oyun bulunamadı." });
   const upd = {};
-  if (gameName) upd.name = gameName; if (steamUser) upd.steamUser = steamUser;
-  if (steamPass) upd.steamPass = steamPass; if (gmailUser) upd.gmailUser = gmailUser;
-  if (gmailPass) upd.gmailPass = gmailPass; if (platform) upd.platform = platform;
-  if (price) upd.price = price; if (emoji) upd.emoji = emoji;
+  if (gameName)  upd.name      = gameName;
+  if (platform)  upd.platform  = platform;
+  if (price)     upd.price     = price;
+  if (emoji)     upd.emoji     = emoji;
+  if (steamUser) upd.steamUser = steamUser;
+  if (steamPass) upd.steamPass = steamPass;
+  if (gmailUser) upd.gmailUser = gmailUser;
+  if (gmailPass) upd.gmailPass = gmailPass;
+  upd.requiresCode = req.body.requiresCode !== "false";
   if (req.file) {
     try { upd.image = await uploadToCloudinary(req.file.buffer, req.file.mimetype); }
     catch(e) { console.error("Cloudinary hatası:", e.message); }
