@@ -267,8 +267,8 @@ app.post("/api/admin/add-game", upload.single("image"), async (req, res) => {
   const { adminKey, gameName, steamUser, steamPass, gmailUser, gmailPass, platform, price, emoji } = req.body;
   if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
   const id = Date.now().toString();
-  let imageUrl = null;
-  if (req.file) {
+  let imageUrl = req.body.imageUrl || null; // Direkt URL girilmişse kullan
+  if (req.file && !imageUrl) {             // Dosya yüklenip URL girilmemişse Cloudinary'e at
     try {
       imageUrl = await uploadToCloudinary(req.file.buffer, req.file.mimetype);
     } catch(e) {
@@ -298,7 +298,9 @@ app.post("/api/admin/edit-game", upload.single("image"), async (req, res) => {
   if (gmailUser) upd.gmailUser = gmailUser;
   if (gmailPass) upd.gmailPass = gmailPass;
   upd.requiresCode = req.body.requiresCode !== "false";
-  if (req.file) {
+  if (req.body.imageUrl) {
+    upd.image = req.body.imageUrl; // Direkt URL girilmiş
+  } else if (req.file) {
     try { upd.image = await uploadToCloudinary(req.file.buffer, req.file.mimetype); }
     catch(e) { console.error("Cloudinary hatası:", e.message); }
   }
