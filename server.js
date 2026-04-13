@@ -276,7 +276,20 @@ app.post("/api/admin/add-game", upload.single("image"), async (req, res) => {
       return res.json({ success: false, message: "Fotoğraf yüklenemedi: " + e.message });
     }
   }
-  const gd = { name: gameName, steamUser, steamPass, gmailUser, gmailPass, emoji: emoji || "🎮", platform: platform || "PC / Steam", price: price || "Hesap", image: imageUrl, requiresCode: req.body.requiresCode !== "false", createdAt: new Date().toISOString() };
+  const requiresCodeVal = req.body.requiresCode !== "false";
+  const gd = {
+    name: gameName,
+    steamUser: steamUser || null,
+    steamPass: steamPass || null,
+    gmailUser: requiresCodeVal ? (gmailUser || null) : null,
+    gmailPass: requiresCodeVal ? (gmailPass || null) : null,
+    emoji: emoji || "🎮",
+    platform: platform || "PC / Steam",
+    price: price || "Hesap",
+    image: imageUrl,
+    requiresCode: requiresCodeVal,
+    createdAt: new Date().toISOString()
+  };
   await C.games().doc(id).set(gd);
   cache.delete("games"); cache.delete("popular-games");
   const { gmailPass: _gp, steamPass: _sp, ...safe } = gd;
