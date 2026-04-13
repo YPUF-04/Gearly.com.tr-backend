@@ -627,41 +627,104 @@ app.post("/api/admin/delete-review", async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════
-// CANLI DESTEK CHAT (Admin ↔ Kullanıcı)
+// ══════════════════════════════════════════════════
+// CANLI DESTEK CHAT — SSE Push (Polling YOK)
+// Kullanıcı mesaj atınca → admin SSE'ye push
+// Admin mesaj atınca → kullanıcı SSE'ye push
+// Boşta iken Firestore okuma = 0
 // ══════════════════════════════════════════════════
 
-// Kullanıcı mesaj gönderir
+// SSE bağlantıları — kullanıcı ve admin ayrı
+const sseUsers  = new Map(); // username → kullanıcı bağlantısı
+const sseAdmins = new Map(); // username → admin bağlantısı
+
+function sseSetup(res, map, key) {
+  res.set({
+    "Content-Type":      "text/event-stream",
+    "Cache-Control":     "no-cache",
+    "Connection":        "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+  res.flushHeaders();
+  map.set(key, res);
+  // 20sn'de bir keep-alive gönder (Railway proxy timeout'u önler)
+  const ka = setInterval(() => {
+    if (res.writableEnded) { clearInterval(ka); map.delete(key); return; }
+    res.write(": ping\n\n");
+  }, 20000);
+  return ka;
+}
+
+function ssePush(map, key, data) {
+  const client = map.get(key);
+  if (client && !client.writableEnded) {
+    client.write(`data: ${JSON.stringify(data)}\n\n`);
+  }
+}
+
+// Kullanıcı SSE — admin mesajlarını push alır
+app.get("/api/chat/subscribe", (req, res) => {
+  const { username } = req.query;
+  if (!username) return res.status(400).end();
+  const id = username.toLowerCase();
+  const ka = sseSetup(res, sseUsers, id);
+  req.on("close", () => { sseUsers.delete(id); clearInterval(ka); });
+});
+
+// Admin SSE — kullanıcı mesajlarını push alır
+app.get("/api/chat/subscribe-admin", (req, res) => {
+  const { username, adminKey } = req.query;
+  if (!username || adminKey !== process.env.ADMIN_KEY) return res.status(403).end();
+  const id = username.toLowerCase();
+  const ka = sseSetup(res, sseAdmins, id);
+  req.on("close", () => { sseAdmins.delete(id); clearInterval(ka); });
+});
+
+// Mesaj gönder — her iki tarafa push
 app.post("/api/chat/send", async (req, res) => {
   const { username, message, isAdmin, adminKey } = req.body;
   if (!username || !message) return res.json({ success: false, message: "Eksik alan." });
   if (isAdmin && adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
+
   const chatId = username.toLowerCase();
+  const now    = new Date().toISOString();
+  const sender = isAdmin ? "admin" : "user";
+
   await C.chat().doc(chatId).collection("messages").add({
-    text: message, sender: isAdmin ? "admin" : "user",
-    createdAt: new Date().toISOString(), read: false
+    text: message, sender, createdAt: now, read: false
   });
-  // Okunmamış mesaj sayısını güncelle
-  const chatRef = C.chat().doc(chatId);
+  const chatRef  = C.chat().doc(chatId);
   const chatSnap = await chatRef.get();
-  const cur = chatSnap.exists ? chatSnap.data() : {};
+  const cur      = chatSnap.exists ? chatSnap.data() : {};
   await chatRef.set({
-    username, lastMessage: message,
-    lastAt: new Date().toISOString(),
-    unreadUser: isAdmin ? (cur.unreadUser||0) + 1 : cur.unreadUser||0,
-    unreadAdmin: isAdmin ? cur.unreadAdmin||0 : (cur.unreadAdmin||0) + 1,
+    username, lastMessage: message, lastAt: now,
+    unreadUser:  isAdmin ? (cur.unreadUser||0) + 1 : (cur.unreadUser||0),
+    unreadAdmin: isAdmin ? (cur.unreadAdmin||0)     : (cur.unreadAdmin||0) + 1,
   }, { merge: true });
-  res.json({ success: true });
+
+  const msgObj = { text: message, sender, createdAt: now };
+
+  if (isAdmin) {
+    // Admin yazdı → kullanıcıya push
+    ssePush(sseUsers, chatId, msgObj);
+  } else {
+    // Kullanıcı yazdı → admin'e push
+    ssePush(sseAdmins, chatId, msgObj);
+  }
+
+  res.json({ success: true, lastAt: now });
 });
 
-// Mesajları getir
+// Mesajları getir (sayfa açılınca 1 kez)
 app.get("/api/chat/messages", async (req, res) => {
   const { username, adminKey } = req.query;
   if (!username) return res.json({ success: false });
+  const rlKey = `chat-msg-${username.toLowerCase()}`;
+  if (rateLimit(rlKey, 10)) return res.json({ success: false, message: "Çok fazla istek." });
   const chatId = username.toLowerCase();
-  const snap = await C.chat().doc(chatId).collection("messages").get();
+  const snap   = await C.chat().doc(chatId).collection("messages").get();
   const messages = snap.docs.map(d => ({ id: d.id, ...d.data() }))
     .sort((a,b) => (a.createdAt||"").localeCompare(b.createdAt||""));
-  // Admin okursa unreadAdmin sıfırla
   if (adminKey === process.env.ADMIN_KEY) {
     await C.chat().doc(chatId).set({ unreadAdmin: 0 }, { merge: true });
   } else {
@@ -670,7 +733,7 @@ app.get("/api/chat/messages", async (req, res) => {
   res.json({ success: true, messages });
 });
 
-// Tüm chatları listele (admin için)
+// Tüm chatları listele (admin)
 app.post("/api/admin/get-chats", async (req, res) => {
   const { adminKey } = req.body;
   if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
