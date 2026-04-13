@@ -82,28 +82,26 @@ async function uploadToCloudinary(buffer, mimetype) {
   });
 }
 
-// ── Basit in-memory cache (Railway restart'ta sıfırlanır) ─────
-const cache = new Map(); // key → { data, expiresAt }
+// ── Basit in-memory cache ──────────────────────────────────────
+const cache = new Map();
 function cacheGet(key) {
-  const entry = cache.get(key);
-  if (!entry) return null;
-  if (Date.now() > entry.expiresAt) { cache.delete(key); return null; }
-  return entry.data;
+  const e = cache.get(key);
+  if (!e) return null;
+  if (Date.now() > e.exp) { cache.delete(key); return null; }
+  return e.data;
 }
 function cacheSet(key, data, ttlMs = 60_000) {
-  cache.set(key, { data, expiresAt: Date.now() + ttlMs });
+  cache.set(key, { data, exp: Date.now() + ttlMs });
 }
 
-// Basit rate limiter (bellek tabanlı)
+// Basit rate limiter
 const rlMap = new Map();
-function rateLimit(key, maxPerMinute = 10) {
+function rateLimit(key, maxPerMin = 10) {
   const now = Date.now();
-  const window = 60_000;
-  const entry = rlMap.get(key) || { count: 0, reset: now + window };
-  if (now > entry.reset) { entry.count = 0; entry.reset = now + window; }
-  entry.count++;
-  rlMap.set(key, entry);
-  return entry.count > maxPerMinute;
+  const e = rlMap.get(key) || { n: 0, reset: now + 60_000 };
+  if (now > e.reset) { e.n = 0; e.reset = now + 60_000; }
+  e.n++; rlMap.set(key, e);
+  return e.n > maxPerMin;
 }
 
 // Koleksiyon referansları
@@ -146,13 +144,17 @@ app.post("/api/login", async (req, res) => {
 // ══════════════════════════════════════════════════
 
 app.get("/api/stats", async (req, res) => {
+  const cached = cacheGet("stats");
+  if (cached) return res.json(cached);
   const [usersSnap, gamesSnap, settingsSnap] = await Promise.all([
     C.users().count().get(),
     C.games().count().get(),
     C.settings().get(),
   ]);
   const s = settingsSnap.exists ? settingsSnap.data() : {};
-  res.json({ success: true, userCount: usersSnap.data().count, gameCount: gamesSnap.data().count, rating: s.rating ?? 5, serverStatus: s.serverStatus ?? true });
+  const result = { success: true, userCount: usersSnap.data().count, gameCount: gamesSnap.data().count, rating: s.rating ?? 5, serverStatus: s.serverStatus ?? true };
+  cacheSet("stats", result, 120_000); // 2 dakika
+  res.json(result);
 });
 
 // ══════════════════════════════════════════════════
@@ -328,7 +330,7 @@ app.post("/api/admin/add-game", upload.single("image"), async (req, res) => {
     createdAt: new Date().toISOString()
   };
   await C.games().doc(id).set(gd);
-  cache.delete("games"); cache.delete("popular-games");
+  cache.delete("games"); cache.delete("popular-games"); cache.delete("stats");
   const { gmailPass: _gp, steamPass: _sp, ...safe } = gd;
   res.json({ success: true, message: "Oyun eklendi.", game: { id, ...safe } });
 });
@@ -363,6 +365,7 @@ app.post("/api/admin/delete-game", async (req, res) => {
   const { adminKey, gameId } = req.body;
   if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
   await C.games().doc(gameId).delete();
+  cache.delete("games"); cache.delete("popular-games"); cache.delete("stats");
   res.json({ success: true });
 });
 
@@ -628,7 +631,7 @@ app.get("/api/reviews", async (req, res) => {
   const snap = await C.reviews().get();
   const reviews = snap.docs.map(d => ({ id: d.id, ...d.data() }))
     .sort((a,b) => (a.order||99) - (b.order||99));
-  cacheSet("reviews", reviews, 120_000); // 2 dakika
+  cacheSet("reviews", reviews, 120_000);
   res.json({ success: true, reviews });
 });
 
@@ -730,13 +733,12 @@ app.post("/api/chat/send", async (req, res) => {
   await C.chat().doc(chatId).collection("messages").add({
     text: message, sender, createdAt: now, read: false
   });
-  const chatRef  = C.chat().doc(chatId);
-  const chatSnap = await chatRef.get();
-  const cur      = chatSnap.exists ? chatSnap.data() : {};
-  await chatRef.set({
+  // get() kaldırıldı — FieldValue.increment ile tek yazma
+  const { FieldValue } = require("firebase-admin/firestore");
+  await C.chat().doc(chatId).set({
     username, lastMessage: message, lastAt: now,
-    unreadUser:  isAdmin ? (cur.unreadUser||0) + 1 : (cur.unreadUser||0),
-    unreadAdmin: isAdmin ? (cur.unreadAdmin||0)     : (cur.unreadAdmin||0) + 1,
+    unreadUser:  isAdmin ? FieldValue.increment(1) : FieldValue.increment(0),
+    unreadAdmin: isAdmin ? FieldValue.increment(0) : FieldValue.increment(1),
   }, { merge: true });
 
   const msgObj = { text: message, sender, createdAt: now };
