@@ -303,6 +303,7 @@ app.post("/api/admin/add-game", async (req, res) => {
   const { adminKey, gameName, steamUser, steamPass, gmailUser, gmailPass, platform, price, emoji, imageUrl, accountType } = req.body;
   if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
   const id = Date.now().toString();
+  // Steam Guard: default true — sadece açıkça 'false' gönderilirse kapalı sayılır
   const requiresCodeVal = req.body.requiresCode !== "false";
   const gd = {
     name: gameName,
