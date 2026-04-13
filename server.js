@@ -11,19 +11,26 @@ const fs = require("fs");
 const { initializeApp, cert } = require("firebase-admin/app");
 const { getFirestore } = require("firebase-admin/firestore");
 
-// ── Cloudinary (resim depolama) ────────────────────────────────
-const cloudinary = require("cloudinary").v2;
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key:    process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-});
-const CLOUDINARY_OK = !!(
-  process.env.CLOUDINARY_CLOUD_NAME &&
-  process.env.CLOUDINARY_API_KEY &&
-  process.env.CLOUDINARY_API_SECRET
-);
-if (!CLOUDINARY_OK) console.warn("⚠️  Cloudinary env variables eksik — fotoğraf yükleme devre dışı.");
+// ── Cloudinary (resim depolama — isteğe bağlı) ────────────────
+let cloudinary = null;
+let CLOUDINARY_OK = false;
+try {
+  cloudinary = require("cloudinary").v2;
+  cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key:    process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET,
+  });
+  CLOUDINARY_OK = !!(
+    process.env.CLOUDINARY_CLOUD_NAME &&
+    process.env.CLOUDINARY_API_KEY &&
+    process.env.CLOUDINARY_API_SECRET
+  );
+  if (CLOUDINARY_OK) console.log("✅ Cloudinary bağlandı.");
+  else console.warn("⚠️  Cloudinary env variables eksik — dosya yükleme devre dışı.");
+} catch(e) {
+  console.warn("⚠️  Cloudinary paketi yüklü değil — dosya yükleme devre dışı. (npm install cloudinary)");
+}
 
 // ── Firebase init ──────────────────────────────────────────────
 let firebaseApp;
