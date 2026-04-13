@@ -82,6 +82,30 @@ async function uploadToCloudinary(buffer, mimetype) {
   });
 }
 
+// ── Basit in-memory cache (Railway restart'ta sıfırlanır) ─────
+const cache = new Map(); // key → { data, expiresAt }
+function cacheGet(key) {
+  const entry = cache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) { cache.delete(key); return null; }
+  return entry.data;
+}
+function cacheSet(key, data, ttlMs = 60_000) {
+  cache.set(key, { data, expiresAt: Date.now() + ttlMs });
+}
+
+// Basit rate limiter (bellek tabanlı)
+const rlMap = new Map();
+function rateLimit(key, maxPerMinute = 10) {
+  const now = Date.now();
+  const window = 60_000;
+  const entry = rlMap.get(key) || { count: 0, reset: now + window };
+  if (now > entry.reset) { entry.count = 0; entry.reset = now + window; }
+  entry.count++;
+  rlMap.set(key, entry);
+  return entry.count > maxPerMinute;
+}
+
 // Koleksiyon referansları
 const C = {
   users:    () => db.collection("users"),
@@ -156,15 +180,20 @@ app.post("/api/redeem-code", async (req, res) => {
 // ══════════════════════════════════════════════════
 
 app.get("/api/games", async (req, res) => {
+  const cached = cacheGet("games");
+  if (cached) return res.json({ success: true, games: cached });
   const snap = await C.games().get();
   const games = snap.docs.map(d => {
     const { gmailPass, steamPass, steamUser, gmailUser, ...rest } = d.data();
     return { id: d.id, ...rest };
   }).sort((a,b) => (a.createdAt||"").localeCompare(b.createdAt||""));
+  cacheSet("games", games);
   res.json({ success: true, games });
 });
 
 app.get("/api/popular-games", async (req, res) => {
+  const cached = cacheGet("popular-games");
+  if (cached) return res.json({ success: true, games: cached });
   const snap = await C.games().get();
   const games = snap.docs.map(d => {
     const { gmailPass, steamPass, steamUser, gmailUser, ...rest } = d.data();
@@ -172,6 +201,7 @@ app.get("/api/popular-games", async (req, res) => {
   }).filter(g => g.popular)
     .sort((a,b) => (a.popularOrder||99) - (b.popularOrder||99))
     .slice(0,6);
+  cacheSet("popular-games", games);
   res.json({ success: true, games });
 });
 
@@ -584,6 +614,7 @@ app.post("/api/admin/toggle-popular", async (req, res) => {
   const snap = await ref.get();
   if (!snap.exists) return res.json({ success: false, message: "Oyun bulunamadı." });
   await ref.update({ popular: !!popular, popularOrder: parseInt(popularOrder) || 99 });
+  cache.delete("games"); cache.delete("popular-games");
   res.json({ success: true });
 });
 
@@ -592,9 +623,12 @@ app.post("/api/admin/toggle-popular", async (req, res) => {
 // ══════════════════════════════════════════════════
 
 app.get("/api/reviews", async (req, res) => {
+  const cached = cacheGet("reviews");
+  if (cached) return res.json({ success: true, reviews: cached });
   const snap = await C.reviews().get();
   const reviews = snap.docs.map(d => ({ id: d.id, ...d.data() }))
     .sort((a,b) => (a.order||99) - (b.order||99));
+  cacheSet("reviews", reviews, 120_000); // 2 dakika
   res.json({ success: true, reviews });
 });
 
@@ -603,6 +637,7 @@ app.post("/api/admin/add-review", async (req, res) => {
   if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
   if (!username || !message) return res.json({ success: false, message: "Ad ve mesaj zorunlu." });
   const ref = await C.reviews().add({ username, message, avatar: avatar||"😊", rating: parseInt(rating)||5, order: parseInt(order)||99, createdAt: new Date().toISOString() });
+  cache.delete("reviews");
   res.json({ success: true, id: ref.id });
 });
 
@@ -616,6 +651,7 @@ app.post("/api/admin/update-review", async (req, res) => {
   if (rating !== undefined) upd.rating = parseInt(rating);
   if (order !== undefined) upd.order = parseInt(order);
   await C.reviews().doc(reviewId).update(upd);
+  cache.delete("reviews");
   res.json({ success: true });
 });
 
@@ -623,6 +659,7 @@ app.post("/api/admin/delete-review", async (req, res) => {
   const { adminKey, reviewId } = req.body;
   if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
   await C.reviews().doc(reviewId).delete();
+  cache.delete("reviews");
   res.json({ success: true });
 });
 
