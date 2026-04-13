@@ -118,12 +118,54 @@ app.post("/api/redeem-code", async (req, res) => {
   if (!cSnap.exists) return res.json({ success: false, message: "Geçersiz kod." });
   const cd = cSnap.data();
   if (cd.redeemedBy) return res.json({ success: false, message: "Bu kod daha önce kullanıldı." });
+
+  // ── Exclusive kod: direkt oyun ver, bakiye değiştirme ──
+  if (cd.exclusive && cd.exclusiveGameId) {
+    const gSnap = await C.games().doc(cd.exclusiveGameId).get();
+    if (!gSnap.exists) return res.json({ success: false, message: "Bağlı oyun bulunamadı." });
+    const g = gSnap.data();
+    const pid = Date.now().toString();
+    await Promise.all([
+      C.codes().doc(code.toUpperCase()).update({ redeemedBy: username, redeemedAt: new Date().toISOString() }),
+      C.purchases().doc(pid).set({
+        username,
+        gameId: cd.exclusiveGameId,
+        gameName: g.name,
+        gameEmoji: g.emoji || "🎮",
+        steamUser: g.steamUser,
+        steamPass: g.steamPass,
+        gmailUser: g.gmailUser,
+        gmailPass: g.gmailPass,
+        purchasedAt: new Date().toISOString(),
+        steamCodeRequests: 0,
+        lastSteamCode: null,
+        requiresCode: g.requiresCode !== false,
+        fromExclusiveCode: code.toUpperCase(),
+      }),
+    ]);
+    cache.delete("recent-purchases");
+    const u = uSnap.data();
+    return res.json({
+      success: true,
+      exclusive: true,
+      balance: u.balance,
+      added: 0,
+      gameName: g.name,
+      gameEmoji: g.emoji || "🎮",
+      purchaseId: pid,
+      steamUser: g.steamUser,
+      steamPass: g.steamPass,
+      requiresCode: g.requiresCode !== false,
+    });
+  }
+
+  // ── Normal kod: bakiye ekle ──
   const newBal = (uSnap.data().balance || 0) + (cd.balance || 1);
   await Promise.all([
     C.users().doc(key).update({ balance: newBal }),
     C.codes().doc(code.toUpperCase()).update({ redeemedBy: username, redeemedAt: new Date().toISOString() }),
   ]);
-  res.json({ success: true, balance: newBal, added: cd.balance || 1 });
+  res.json({ success: true, exclusive: false, balance: newBal, added: cd.balance || 1 });
 });
 
 // ══════════════════════════════════════════════════
@@ -167,6 +209,8 @@ app.post("/api/purchase", async (req, res) => {
   if (!uSnap.exists) return res.json({ success: false, message: "Kullanıcı bulunamadı." });
   if (!gSnap.exists) return res.json({ success: false, message: "Oyun bulunamadı." });
   const u = uSnap.data(), g = gSnap.data();
+  // Exclusive oyun normal bakiye ile alınamaz
+  if (g.exclusive) return res.json({ success: false, message: "Bu özel oyun normal bakiye ile alınamaz. Özel kod gereklidir." });
   if (u.balance <= 0) return res.json({ success: false, message: "Bakiye yetersiz." });
   const pid = Date.now().toString();
   await Promise.all([
@@ -285,18 +329,24 @@ app.post("/api/admin/edit-game", async (req, res) => {
   if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
   const snap = await C.games().doc(gameId).get();
   if (!snap.exists) return res.json({ success: false, message: "Oyun bulunamadı." });
-  const upd = {};
-  if (gameName)     upd.name        = gameName;
-  if (platform)     upd.platform    = platform;
-  if (price)        upd.price       = price;
-  if (emoji)        upd.emoji       = emoji;
-  if (steamUser)    upd.steamUser   = steamUser;
-  if (steamPass)    upd.steamPass   = steamPass;
-  if (gmailUser)    upd.gmailUser   = gmailUser;
-  if (gmailPass)    upd.gmailPass   = gmailPass;
-  if (accountType)  upd.accountType = accountType;
-  upd.requiresCode = req.body.requiresCode !== "false";
-  if (imageUrl) upd.image = imageUrl;
+  const existing = snap.data();
+  // FIX: boş string gelirse mevcut değeri koru (kaydet butonu sorunu)
+  const upd = {
+    name:        gameName    || existing.name,
+    platform:    platform    || existing.platform,
+    price:       price       || existing.price,
+    emoji:       emoji       || existing.emoji,
+    steamUser:   steamUser   || existing.steamUser,
+    steamPass:   steamPass   || existing.steamPass,
+    gmailUser:   gmailUser   !== undefined ? (gmailUser || existing.gmailUser) : existing.gmailUser,
+    gmailPass:   gmailPass   !== undefined ? (gmailPass || existing.gmailPass) : existing.gmailPass,
+    accountType: accountType || existing.accountType,
+    requiresCode: req.body.requiresCode !== "false",
+    image:       imageUrl !== undefined && imageUrl !== "" ? imageUrl : (existing.image || null),
+    // exclusive alanları koru — sadece toggle endpoint'ten değişsin
+    exclusive:       existing.exclusive       || false,
+    exclusiveGameId: existing.exclusiveGameId || null,
+  };
   await C.games().doc(gameId).update(upd);
   cache.delete("games"); cache.delete("popular-games");
   res.json({ success: true, message: "Oyun güncellendi." });
@@ -560,6 +610,43 @@ app.post("/api/admin/toggle-popular", async (req, res) => {
   await ref.update({ popular: !!popular, popularOrder: parseInt(popularOrder) || 99 });
   cache.delete("games"); cache.delete("popular-games");
   res.json({ success: true });
+});
+
+
+// ══════════════════════════════════════════════════
+// ADMIN — EXCLUSIVE OYUN TOGGLE
+// Özel oyun: sadece özel kodla alınabilir, normal bakiye çalışmaz
+// ══════════════════════════════════════════════════
+
+app.post("/api/admin/toggle-exclusive", async (req, res) => {
+  const { adminKey, gameId, exclusive } = req.body;
+  if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
+  const ref = C.games().doc(gameId);
+  const snap = await ref.get();
+  if (!snap.exists) return res.json({ success: false, message: "Oyun bulunamadı." });
+  await ref.update({ exclusive: !!exclusive });
+  cache.delete("games"); cache.delete("popular-games");
+  res.json({ success: true });
+});
+
+// Exclusive kod oluştur — belirli bir oyuna bağlı
+app.post("/api/admin/add-exclusive-code", async (req, res) => {
+  const { adminKey, code, gameId } = req.body;
+  if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
+  if (!code || !gameId) return res.json({ success: false, message: "Kod ve oyun ID zorunlu." });
+  const gSnap = await C.games().doc(gameId).get();
+  if (!gSnap.exists) return res.json({ success: false, message: "Oyun bulunamadı." });
+  const gameName = gSnap.data().name;
+  await C.codes().doc(code.toUpperCase()).set({
+    balance: 0,             // normal bakiye vermez
+    exclusive: true,
+    exclusiveGameId: gameId,
+    exclusiveGameName: gameName,
+    redeemedBy: null,
+    redeemedAt: null,
+    createdAt: new Date().toISOString()
+  });
+  res.json({ success: true, gameName });
 });
 
 // ══════════════════════════════════════════════════
