@@ -199,8 +199,8 @@ app.get("/api/my-purchases", async (req, res) => {
   const { username } = req.query;
   const snap = await C.purchases().where("username", "==", username).get();
   const purchases = snap.docs
-    .map(d => { const p = d.data(); return { id: d.id, gameName: p.gameName, gameEmoji: p.gameEmoji, steamUser: p.steamUser, steamPass: p.steamPass, purchasedAt: p.purchasedAt, steamCodeRequests: p.steamCodeRequests || 0, lastSteamCode: p.lastSteamCode || null }; })
-    .sort((a,b) => (a.purchasedAt||"").localeCompare(b.purchasedAt||""));
+    .map(d => { const p = d.data(); return { id: d.id, gameName: p.gameName, gameEmoji: p.gameEmoji, steamUser: p.steamUser, steamPass: p.steamPass, purchasedAt: p.purchasedAt, steamCodeRequests: p.steamCodeRequests || 0, lastSteamCode: p.lastSteamCode || null, requiresCode: p.requiresCode !== false }; })
+    .sort((a,b) => (b.purchasedAt||"").localeCompare(a.purchasedAt||"")); // en yeni en üstte
   res.json({ success: true, purchases });
 });
 
