@@ -102,7 +102,7 @@ app.get("/api/stats", async (req, res) => {
   ]);
   const s = settingsSnap.exists ? settingsSnap.data() : {};
   const result = { success: true, userCount: usersSnap.data().count, gameCount: gamesSnap.data().count, rating: s.rating ?? 5, serverStatus: s.serverStatus ?? true };
-  cacheSet("stats", result, 120_000); // 2 dakika
+  cacheSet("stats", result, 300_000); // 5 dakika
   res.json(result);
 });
 
@@ -138,7 +138,7 @@ app.get("/api/games", async (req, res) => {
     const { gmailPass, steamPass, steamUser, gmailUser, ...rest } = d.data();
     return { id: d.id, ...rest };
   }).sort((a,b) => (a.createdAt||"").localeCompare(b.createdAt||""));
-  cacheSet("games", games);
+  cacheSet("games", games, 600_000); // 10 dakika
   res.json({ success: true, games });
 });
 
@@ -152,7 +152,7 @@ app.get("/api/popular-games", async (req, res) => {
   }).filter(g => g.popular)
     .sort((a,b) => (a.popularOrder||99) - (b.popularOrder||99))
     .slice(0,6);
-  cacheSet("popular-games", games);
+  cacheSet("popular-games", games, 600_000); // 10 dakika
   res.json({ success: true, games });
 });
 
@@ -174,6 +174,7 @@ app.post("/api/purchase", async (req, res) => {
     C.purchases().doc(pid).set({ username, gameId, gameName: g.name, gameEmoji: g.emoji || "🎮", steamUser: g.steamUser, steamPass: g.steamPass, gmailUser: g.gmailUser, gmailPass: g.gmailPass, purchasedAt: new Date().toISOString(), steamCodeRequests: 0, lastSteamCode: null, requiresCode: g.requiresCode !== false }),
   ]);
   res.json({ success: true, purchaseId: pid, balance: u.balance - 1, gameName: g.name, steamUser: g.steamUser, steamPass: g.steamPass, requiresCode: g.requiresCode !== false });
+  cache.delete("recent-purchases");
 });
 
 app.get("/api/my-purchases", async (req, res) => {
@@ -186,11 +187,14 @@ app.get("/api/my-purchases", async (req, res) => {
 });
 
 app.get("/api/recent-purchases", async (req, res) => {
-  const snap = await C.purchases().get();
+  const cached = cacheGet("recent-purchases");
+  if (cached) return res.json({ success: true, purchases: cached });
+  // Sadece son 50 kaydı çek — tüm koleksiyonu okuma
+  const snap = await C.purchases().orderBy("purchasedAt", "desc").limit(50).get();
   const purchases = snap.docs
     .map(d => { const p = d.data(); return { username: p.username ? p.username.substring(0,3)+"***" : "???", gameName: p.gameName, gameEmoji: p.gameEmoji || "🎮", purchasedAt: p.purchasedAt }; })
-    .sort((a,b) => (b.purchasedAt||"").localeCompare(a.purchasedAt||""))
     .slice(0,30);
+  cacheSet("recent-purchases", purchases, 300_000); // 5 dakika
   res.json({ success: true, purchases });
 });
 
@@ -252,7 +256,7 @@ app.post("/api/admin/get-games", async (req, res) => {
 });
 
 app.post("/api/admin/add-game", async (req, res) => {
-  const { adminKey, gameName, steamUser, steamPass, gmailUser, gmailPass, platform, price, emoji, imageUrl } = req.body;
+  const { adminKey, gameName, steamUser, steamPass, gmailUser, gmailPass, platform, price, emoji, imageUrl, accountType } = req.body;
   if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
   const id = Date.now().toString();
   const requiresCodeVal = req.body.requiresCode !== "false";
@@ -267,28 +271,30 @@ app.post("/api/admin/add-game", async (req, res) => {
     price: price || "Hesap",
     image: imageUrl || null,
     requiresCode: requiresCodeVal,
+    accountType: accountType || (requiresCodeVal ? "personal" : "general"),
     createdAt: new Date().toISOString()
   };
   await C.games().doc(id).set(gd);
-  cache.delete("games"); cache.delete("popular-games"); cache.delete("stats");
+  cache.delete("games"); cache.delete("popular-games"); cache.delete("stats"); cache.delete("recent-purchases");
   const { gmailPass: _gp, steamPass: _sp, ...safe } = gd;
   res.json({ success: true, message: "Oyun eklendi.", game: { id, ...safe } });
 });
 
 app.post("/api/admin/edit-game", async (req, res) => {
-  const { adminKey, gameId, gameName, steamUser, steamPass, gmailUser, gmailPass, platform, price, emoji, imageUrl } = req.body;
+  const { adminKey, gameId, gameName, steamUser, steamPass, gmailUser, gmailPass, platform, price, emoji, imageUrl, accountType } = req.body;
   if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
   const snap = await C.games().doc(gameId).get();
   if (!snap.exists) return res.json({ success: false, message: "Oyun bulunamadı." });
   const upd = {};
-  if (gameName)  upd.name      = gameName;
-  if (platform)  upd.platform  = platform;
-  if (price)     upd.price     = price;
-  if (emoji)     upd.emoji     = emoji;
-  if (steamUser) upd.steamUser = steamUser;
-  if (steamPass) upd.steamPass = steamPass;
-  if (gmailUser) upd.gmailUser = gmailUser;
-  if (gmailPass) upd.gmailPass = gmailPass;
+  if (gameName)     upd.name        = gameName;
+  if (platform)     upd.platform    = platform;
+  if (price)        upd.price       = price;
+  if (emoji)        upd.emoji       = emoji;
+  if (steamUser)    upd.steamUser   = steamUser;
+  if (steamPass)    upd.steamPass   = steamPass;
+  if (gmailUser)    upd.gmailUser   = gmailUser;
+  if (gmailPass)    upd.gmailPass   = gmailPass;
+  if (accountType)  upd.accountType = accountType;
   upd.requiresCode = req.body.requiresCode !== "false";
   if (imageUrl) upd.image = imageUrl;
   await C.games().doc(gameId).update(upd);
@@ -300,7 +306,7 @@ app.post("/api/admin/delete-game", async (req, res) => {
   const { adminKey, gameId } = req.body;
   if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
   await C.games().doc(gameId).delete();
-  cache.delete("games"); cache.delete("popular-games"); cache.delete("stats");
+  cache.delete("games"); cache.delete("popular-games"); cache.delete("stats"); cache.delete("recent-purchases");
   res.json({ success: true });
 });
 
@@ -566,7 +572,7 @@ app.get("/api/reviews", async (req, res) => {
   const snap = await C.reviews().get();
   const reviews = snap.docs.map(d => ({ id: d.id, ...d.data() }))
     .sort((a,b) => (a.order||99) - (b.order||99));
-  cacheSet("reviews", reviews, 120_000);
+  cacheSet("reviews", reviews, 1_800_000); // 30 dakika
   res.json({ success: true, reviews });
 });
 
