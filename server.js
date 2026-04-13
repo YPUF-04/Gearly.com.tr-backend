@@ -6,31 +6,9 @@ const cors = require("cors");
 const Imap = require("imap");
 const { simpleParser } = require("mailparser");
 const path = require("path");
-const multer = require("multer");
 const fs = require("fs");
 const { initializeApp, cert } = require("firebase-admin/app");
 const { getFirestore } = require("firebase-admin/firestore");
-
-// ── Cloudinary (resim depolama — isteğe bağlı) ────────────────
-let cloudinary = null;
-let CLOUDINARY_OK = false;
-try {
-  cloudinary = require("cloudinary").v2;
-  cloudinary.config({
-    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-    api_key:    process.env.CLOUDINARY_API_KEY,
-    api_secret: process.env.CLOUDINARY_API_SECRET,
-  });
-  CLOUDINARY_OK = !!(
-    process.env.CLOUDINARY_CLOUD_NAME &&
-    process.env.CLOUDINARY_API_KEY &&
-    process.env.CLOUDINARY_API_SECRET
-  );
-  if (CLOUDINARY_OK) console.log("✅ Cloudinary bağlandı.");
-  else console.warn("⚠️  Cloudinary env variables eksik — dosya yükleme devre dışı.");
-} catch(e) {
-  console.warn("⚠️  Cloudinary paketi yüklü değil — dosya yükleme devre dışı. (npm install cloudinary)");
-}
 
 // ── Firebase init ──────────────────────────────────────────────
 let firebaseApp;
@@ -52,35 +30,6 @@ app.use(cors({ origin: "*", methods: ["GET","POST","PUT","DELETE"], allowedHeade
 app.use(express.json({ limit: "10mb" }));
 
 const PORT = process.env.PORT || 3000;
-
-// Multer: diske değil belleğe al, oradan Cloudinary'e yükle
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 }
-});
-
-// Cloudinary'e yükle ve URL döndür
-async function uploadToCloudinary(buffer, mimetype) {
-  if (!CLOUDINARY_OK) throw new Error("Cloudinary yapılandırılmamış. Railway'de CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET env variable'larını ekle.");
-  return new Promise((resolve, reject) => {
-    const stream = cloudinary.uploader.upload_stream(
-      {
-        folder: "gamevault",
-        resource_type: "image",
-        transformation: [{ quality: "auto", fetch_format: "auto" }]
-      },
-      (err, result) => {
-        if (err) reject(err);
-        else {
-          // Temiz URL — transformation olmadan, sadece public_id + format
-          const cleanUrl = `https://res.cloudinary.com/${result.cloud_name}/image/upload/${result.public_id}.${result.format || 'jpg'}`;
-          resolve(cleanUrl);
-        }
-      }
-    );
-    stream.end(buffer);
-  });
-}
 
 // ── Basit in-memory cache ──────────────────────────────────────
 const cache = new Map();
@@ -302,19 +251,10 @@ app.post("/api/admin/get-games", async (req, res) => {
   res.json({ success: true, games });
 });
 
-app.post("/api/admin/add-game", upload.single("image"), async (req, res) => {
-  const { adminKey, gameName, steamUser, steamPass, gmailUser, gmailPass, platform, price, emoji } = req.body;
+app.post("/api/admin/add-game", async (req, res) => {
+  const { adminKey, gameName, steamUser, steamPass, gmailUser, gmailPass, platform, price, emoji, imageUrl } = req.body;
   if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
   const id = Date.now().toString();
-  let imageUrl = req.body.imageUrl || null; // Direkt URL girilmişse kullan
-  if (req.file && !imageUrl) {             // Dosya yüklenip URL girilmemişse Cloudinary'e at
-    try {
-      imageUrl = await uploadToCloudinary(req.file.buffer, req.file.mimetype);
-    } catch(e) {
-      console.error("Cloudinary hatası:", e.message);
-      return res.json({ success: false, message: "Fotoğraf yüklenemedi: " + e.message });
-    }
-  }
   const requiresCodeVal = req.body.requiresCode !== "false";
   const gd = {
     name: gameName,
@@ -325,7 +265,7 @@ app.post("/api/admin/add-game", upload.single("image"), async (req, res) => {
     emoji: emoji || "🎮",
     platform: platform || "PC / Steam",
     price: price || "Hesap",
-    image: imageUrl,
+    image: imageUrl || null,
     requiresCode: requiresCodeVal,
     createdAt: new Date().toISOString()
   };
@@ -335,8 +275,8 @@ app.post("/api/admin/add-game", upload.single("image"), async (req, res) => {
   res.json({ success: true, message: "Oyun eklendi.", game: { id, ...safe } });
 });
 
-app.post("/api/admin/edit-game", upload.single("image"), async (req, res) => {
-  const { adminKey, gameId, gameName, steamUser, steamPass, gmailUser, gmailPass, platform, price, emoji } = req.body;
+app.post("/api/admin/edit-game", async (req, res) => {
+  const { adminKey, gameId, gameName, steamUser, steamPass, gmailUser, gmailPass, platform, price, emoji, imageUrl } = req.body;
   if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
   const snap = await C.games().doc(gameId).get();
   if (!snap.exists) return res.json({ success: false, message: "Oyun bulunamadı." });
@@ -350,12 +290,7 @@ app.post("/api/admin/edit-game", upload.single("image"), async (req, res) => {
   if (gmailUser) upd.gmailUser = gmailUser;
   if (gmailPass) upd.gmailPass = gmailPass;
   upd.requiresCode = req.body.requiresCode !== "false";
-  if (req.body.imageUrl) {
-    upd.image = req.body.imageUrl; // Direkt URL girilmiş
-  } else if (req.file) {
-    try { upd.image = await uploadToCloudinary(req.file.buffer, req.file.mimetype); }
-    catch(e) { console.error("Cloudinary hatası:", e.message); }
-  }
+  if (imageUrl) upd.image = imageUrl;
   await C.games().doc(gameId).update(upd);
   cache.delete("games"); cache.delete("popular-games");
   res.json({ success: true, message: "Oyun güncellendi." });
