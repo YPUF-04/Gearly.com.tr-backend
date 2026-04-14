@@ -202,32 +202,91 @@ app.get("/api/popular-games", async (req, res) => {
 // SATIN ALMA
 // ══════════════════════════════════════════════════
 
-app.post("/api/purchase", async (req, res) => {
-  const { username, gameId } = req.body;
-  const key = username?.toLowerCase();
-  const [uSnap, gSnap] = await Promise.all([C.users().doc(key).get(), C.games().doc(gameId).get()]);
-  if (!uSnap.exists) return res.json({ success: false, message: "Kullanıcı bulunamadı." });
-  if (!gSnap.exists) return res.json({ success: false, message: "Oyun bulunamadı." });
-  const u = uSnap.data(), g = gSnap.data();
-  // Exclusive oyun normal bakiye ile alınamaz
-  if (g.exclusive) return res.json({ success: false, message: "Bu özel oyun normal bakiye ile alınamaz. Özel kod gereklidir." });
-  if (u.balance <= 0) return res.json({ success: false, message: "Bakiye yetersiz." });
-  const pid = Date.now().toString();
-  await Promise.all([
-    C.users().doc(key).update({ balance: u.balance - 1 }),
-    C.purchases().doc(pid).set({ username, gameId, gameName: g.name, gameEmoji: g.emoji || "🎮", steamUser: g.steamUser, steamPass: g.steamPass, gmailUser: g.gmailUser, gmailPass: g.gmailPass, purchasedAt: new Date().toISOString(), steamCodeRequests: 0, lastSteamCode: null, requiresCode: g.requiresCode !== false }),
-  ]);
-  res.json({ success: true, purchaseId: pid, balance: u.balance - 1, gameName: g.name, steamUser: g.steamUser, steamPass: g.steamPass, requiresCode: g.requiresCode !== false });
-  cache.delete("recent-purchases");
+// ══════════════════════════════════════════════════
+// KOD İLE SATIN ALMA (anonim — kullanıcı hesabı yok)
+// 1. Kod kontrol edilir (normal bakiye kodu)
+// 2. Oyun seçilir
+// 3. Kod kullanılır → purchase oluşturulur
+// ══════════════════════════════════════════════════
+
+// Kodu doğrula (oyun seçmeden önce)
+app.post("/api/verify-code", async (req, res) => {
+  const { code } = req.body;
+  if (!code) return res.json({ success: false, message: "Kod gerekli." });
+  const cSnap = await C.codes().doc(code.toUpperCase()).get();
+  if (!cSnap.exists) return res.json({ success: false, message: "Geçersiz kod." });
+  const cd = cSnap.data();
+  if (cd.redeemedBy) return res.json({ success: false, message: "Bu kod zaten kullanılmış." });
+  if (cd.exclusive) {
+    // Exclusive kod: direkt oyuna bağlı, oyun seçimi yok
+    return res.json({ success: true, type: "exclusive", exclusiveGameId: cd.exclusiveGameId, exclusiveGameName: cd.exclusiveGameName });
+  }
+  return res.json({ success: true, type: "normal", balance: cd.balance || 1 });
 });
 
+// Kod + oyun ile satın al
+app.post("/api/purchase-with-code", async (req, res) => {
+  const { code, gameId } = req.body;
+  if (!code || !gameId) return res.json({ success: false, message: "Kod ve oyun ID gerekli." });
+  const [cSnap, gSnap] = await Promise.all([
+    C.codes().doc(code.toUpperCase()).get(),
+    C.games().doc(gameId).get(),
+  ]);
+  if (!cSnap.exists) return res.json({ success: false, message: "Geçersiz kod." });
+  if (!gSnap.exists) return res.json({ success: false, message: "Oyun bulunamadı." });
+  const cd = cSnap.data(), g = gSnap.data();
+  if (cd.redeemedBy) return res.json({ success: false, message: "Bu kod zaten kullanılmış." });
+  if (cd.exclusive) return res.json({ success: false, message: "Özel kod farklı bir oyuna bağlıdır." });
+  if (g.exclusive) return res.json({ success: false, message: "Bu özel oyun için özel kod gereklidir." });
+  const pid = Date.now().toString();
+  await Promise.all([
+    C.codes().doc(code.toUpperCase()).update({ redeemedBy: code.toUpperCase(), redeemedAt: new Date().toISOString(), usedForGameId: gameId, usedForGameName: g.name }),
+    C.purchases().doc(pid).set({
+      code: code.toUpperCase(),
+      gameId, gameName: g.name, gameEmoji: g.emoji || "🎮",
+      steamUser: g.steamUser, steamPass: g.steamPass,
+      gmailUser: g.gmailUser, gmailPass: g.gmailPass,
+      purchasedAt: new Date().toISOString(),
+      steamCodeRequests: 0, lastSteamCode: null,
+      requiresCode: g.requiresCode !== false,
+    }),
+  ]);
+  cache.delete("recent-purchases");
+  res.json({ success: true, purchaseId: pid, gameName: g.name, steamUser: g.steamUser, steamPass: g.steamPass, requiresCode: g.requiresCode !== false });
+});
+
+// Kod ile satın alınan oyunu görüntüle
+app.post("/api/my-purchase-by-code", async (req, res) => {
+  const { code } = req.body;
+  if (!code) return res.json({ success: false, message: "Kod gerekli." });
+  const cSnap = await C.codes().doc(code.toUpperCase()).get();
+  if (!cSnap.exists) return res.json({ success: false, message: "Geçersiz kod." });
+  const cd = cSnap.data();
+  if (!cd.redeemedBy) return res.json({ success: false, message: "Bu kod henüz kullanılmamış." });
+  // purchases koleksiyonunda bu kodu bul
+  const pSnap = await C.purchases().where("code", "==", code.toUpperCase()).limit(1).get();
+  if (pSnap.empty) return res.json({ success: false, message: "Satın alım bulunamadı." });
+  const p = pSnap.docs[0].data();
+  const pid = pSnap.docs[0].id;
+  res.json({
+    success: true,
+    purchaseId: pid,
+    gameName: p.gameName, gameEmoji: p.gameEmoji,
+    steamUser: p.steamUser, steamPass: p.steamPass,
+    steamCodeRequests: p.steamCodeRequests || 0,
+    lastSteamCode: p.lastSteamCode || null,
+    requiresCode: p.requiresCode !== false,
+  });
+});
+
+// Eski purchase endpoint — artık kullanılmıyor, compat için bırakıldı
+app.post("/api/purchase", async (req, res) => {
+  res.json({ success: false, message: "Bu endpoint artık kullanılmıyor. /api/purchase-with-code kullanın." });
+});
+
+// my-purchases — artık kod bazlı sistem kullanıldığı için /api/my-purchase-by-code endpoint'i kullanılıyor
 app.get("/api/my-purchases", async (req, res) => {
-  const { username } = req.query;
-  const snap = await C.purchases().where("username", "==", username).get();
-  const purchases = snap.docs
-    .map(d => { const p = d.data(); return { id: d.id, gameName: p.gameName, gameEmoji: p.gameEmoji, steamUser: p.steamUser, steamPass: p.steamPass, purchasedAt: p.purchasedAt, steamCodeRequests: p.steamCodeRequests || 0, lastSteamCode: p.lastSteamCode || null, requiresCode: p.requiresCode !== false }; })
-    .sort((a,b) => (b.purchasedAt||"").localeCompare(a.purchasedAt||"")); // en yeni en üstte
-  res.json({ success: true, purchases });
+  res.json({ success: true, purchases: [] });
 });
 
 app.get("/api/recent-purchases", async (req, res) => {
@@ -423,7 +482,7 @@ app.post("/api/admin/get-purchases", async (req, res) => {
   if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
   const snap = await C.purchases().get();
   const purchases = snap.docs
-    .map(d => { const p = d.data(); return { id: d.id, username: p.username, gameName: p.gameName, gameEmoji: p.gameEmoji, purchasedAt: p.purchasedAt, steamCodeRequests: p.steamCodeRequests || 0 }; })
+    .map(d => { const p = d.data(); return { id: d.id, code: p.code || p.username || "—", gameName: p.gameName, gameEmoji: p.gameEmoji, purchasedAt: p.purchasedAt, steamCodeRequests: p.steamCodeRequests || 0 }; })
     .sort((a,b) => (b.purchasedAt||"").localeCompare(a.purchasedAt||""));
   res.json({ success: true, purchases });
 });
