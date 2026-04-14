@@ -251,16 +251,20 @@ app.post("/api/get-steam-code", async (req, res) => {
   const snap = await C.purchases().doc(purchaseId).get();
   if (!snap.exists) return res.json({ success: false, message: "Satın alma bulunamadı." });
   const p = snap.data();
-  if ((p.steamCodeRequests || 0) >= 5)
-    return res.json({ success: false, message: "Maksimum doğrulama talebi aşıldı (5/5).", limitReached: true });
+  // steamCodeRequests negatifse admin bonus hak vermiş (örn: -3 = 8 hak kapasitesi)
+  const maxRequests = Math.max(5, 5 + Math.abs(Math.min(0, p.steamCodeRequests || 0)));
+  if ((p.steamCodeRequests || 0) >= maxRequests)
+    return res.json({ success: false, message: `Maksimum doğrulama talebi aşıldı (${maxRequests}/${maxRequests}).`, limitReached: true });
   try {
     const steamCode = await fetchSteamCodeFromGmail(p.gmailUser, p.gmailPass);
     const newReqs = (p.steamCodeRequests || 0) + 1;
     const upd = { steamCodeRequests: newReqs };
     if (steamCode) upd.lastSteamCode = steamCode;
     await C.purchases().doc(purchaseId).update(upd);
-    if (!steamCode) return res.json({ success: false, message: "Kod henüz gelmedi. 20-30 saniye bekleyip tekrar dene.", requestsLeft: 5 - newReqs });
-    res.json({ success: true, steamCode, steamUser: p.steamUser, steamPass: p.steamPass, requestsLeft: 5 - newReqs });
+    const maxReqs = Math.max(5, 5 + Math.abs(Math.min(0, p.steamCodeRequests || 0)));
+    const left = maxReqs - newReqs;
+    if (!steamCode) return res.json({ success: false, message: "Kod henüz gelmedi. 20-30 saniye bekleyip tekrar dene.", requestsLeft: left, maxRequests: maxReqs });
+    res.json({ success: true, steamCode, steamUser: p.steamUser, steamPass: p.steamPass, requestsLeft: left, maxRequests: maxReqs });
   } catch (err) {
     console.error("Steam kodu hatası:", err.message);
     res.json({ success: false, message: "Mail sunucusuna bağlanılamadı." });
@@ -433,9 +437,12 @@ app.post("/api/admin/grant-requests", async (req, res) => {
   if (!snap.exists) return res.json({ success: false, message: "Satın alma bulunamadı." });
   const cur = snap.data().steamCodeRequests || 0;
   const add = parseInt(amount) || 3;
-  const newVal = Math.max(0, cur - add);
+  // Negatife izin ver: -3 = 8 hak kapasitesi (5 + 3 bonus)
+  const newVal = cur - add;
   await ref.update({ steamCodeRequests: newVal });
-  res.json({ success: true, newRequests: newVal });
+  // Kullanıcıya gösterilecek kalan hak = 5 - newVal (negatifse 5+|newVal|)
+  const remaining = 5 - newVal;
+  res.json({ success: true, newRequests: newVal, remaining });
 });
 
 // ══════════════════════════════════════════════════
