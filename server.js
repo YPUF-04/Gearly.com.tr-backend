@@ -218,8 +218,10 @@ app.post("/api/verify-code", async (req, res) => {
   const cd = cSnap.data();
   if (cd.redeemedBy) return res.json({ success: false, message: "Bu kod zaten kullanılmış." });
   if (cd.exclusive) {
-    // Exclusive kod: direkt oyuna bağlı, oyun seçimi yok
-    return res.json({ success: true, type: "exclusive", exclusiveGameId: cd.exclusiveGameId, exclusiveGameName: cd.exclusiveGameName });
+    // Exclusive kod: birden fazla oyun seçeneği olabilir
+    const gameIds = Array.isArray(cd.exclusiveGameIds) ? cd.exclusiveGameIds : (cd.exclusiveGameId ? [cd.exclusiveGameId] : []);
+    const gameNames = Array.isArray(cd.exclusiveGameNames) ? cd.exclusiveGameNames : (cd.exclusiveGameName ? [cd.exclusiveGameName] : []);
+    return res.json({ success: true, type: "exclusive", exclusiveGameIds: gameIds, exclusiveGameNames: gameNames });
   }
   return res.json({ success: true, type: "normal", balance: cd.balance || 1 });
 });
@@ -236,8 +238,16 @@ app.post("/api/purchase-with-code", async (req, res) => {
   if (!gSnap.exists) return res.json({ success: false, message: "Oyun bulunamadı." });
   const cd = cSnap.data(), g = gSnap.data();
   if (cd.redeemedBy) return res.json({ success: false, message: "Bu kod zaten kullanılmış." });
-  if (cd.exclusive) return res.json({ success: false, message: "Özel kod farklı bir oyuna bağlıdır." });
-  if (g.exclusive) return res.json({ success: false, message: "Bu özel oyun için özel kod gereklidir." });
+  if (cd.exclusive) {
+    // Exclusive kod: seçilen oyun bu kodun geçerli oyunları arasında mı?
+    const allowedIds = Array.isArray(cd.exclusiveGameIds) ? cd.exclusiveGameIds : (cd.exclusiveGameId ? [cd.exclusiveGameId] : []);
+    if (!allowedIds.includes(gameId)) {
+      return res.json({ success: false, message: "Bu kod seçtiğiniz oyun için geçerli değil." });
+    }
+  } else if (g.exclusive) {
+    // Normal kod ile exclusive oyun alınamaz
+    return res.json({ success: false, message: "Bu özel oyun için özel kod gereklidir." });
+  }
   const pid = Date.now().toString();
   await Promise.all([
     C.codes().doc(code.toUpperCase()).update({ redeemedBy: code.toUpperCase(), redeemedAt: new Date().toISOString(), usedForGameId: gameId, usedForGameName: g.name }),
@@ -696,24 +706,29 @@ app.post("/api/admin/toggle-exclusive", async (req, res) => {
   res.json({ success: true });
 });
 
-// Exclusive kod oluştur — belirli bir oyuna bağlı
+// Exclusive kod oluştur — birden fazla oyun seçeneği destekli
 app.post("/api/admin/add-exclusive-code", async (req, res) => {
-  const { adminKey, code, gameId } = req.body;
+  const { adminKey, code, gameId, gameIds } = req.body;
   if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
-  if (!code || !gameId) return res.json({ success: false, message: "Kod ve oyun ID zorunlu." });
-  const gSnap = await C.games().doc(gameId).get();
-  if (!gSnap.exists) return res.json({ success: false, message: "Oyun bulunamadı." });
-  const gameName = gSnap.data().name;
+  if (!code) return res.json({ success: false, message: "Kod zorunlu." });
+  // gameIds dizisi veya tekil gameId
+  const ids = Array.isArray(gameIds) && gameIds.length > 0 ? gameIds : (gameId ? [gameId] : []);
+  if (!ids.length) return res.json({ success: false, message: "En az bir oyun seçilmeli." });
+  // Oyun isimlerini çek
+  const snaps = await Promise.all(ids.map(id => C.games().doc(id).get()));
+  const names = snaps.map((s, i) => s.exists ? s.data().name : ids[i]);
   await C.codes().doc(code.toUpperCase()).set({
-    balance: 0,             // normal bakiye vermez
+    balance: 0,
     exclusive: true,
-    exclusiveGameId: gameId,
-    exclusiveGameName: gameName,
+    exclusiveGameId: ids[0],        // geriye dönük uyumluluk
+    exclusiveGameName: names[0],
+    exclusiveGameIds: ids,           // yeni: çoklu oyun
+    exclusiveGameNames: names,
     redeemedBy: null,
     redeemedAt: null,
     createdAt: new Date().toISOString()
   });
-  res.json({ success: true, gameName });
+  res.json({ success: true, gameName: names.join(", "), gameNames: names });
 });
 
 // ══════════════════════════════════════════════════
