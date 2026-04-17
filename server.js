@@ -1,5 +1,5 @@
 // =============================================
-// GameVault Backend — v4 (Firebase + fixes)
+// Gearly Backend — v4 (Firebase + fixes)
 // =============================================
 const express = require("express");
 const cors = require("cors");
@@ -554,13 +554,24 @@ app.post("/api/admin/reply-support", async (req, res) => {
 // ══════════════════════════════════════════════════
 
 app.post("/api/admin/update-settings", async (req, res) => {
-  const { adminKey, rating, serverStatus } = req.body;
+  const { adminKey, rating, serverStatus, supportStatus } = req.body;
   if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
   const upd = {};
   if (rating !== undefined) upd.rating = parseFloat(rating);
   if (serverStatus !== undefined) upd.serverStatus = serverStatus;
+  if (supportStatus !== undefined) upd.supportStatus = supportStatus; // "online" | "30" | "60" vb.
   await C.settings().set(upd, { merge: true });
   res.json({ success: true });
+});
+
+app.get("/api/settings", async (req, res) => {
+  try {
+    const snap = await C.settings().get();
+    const data = snap.exists ? snap.data() : {};
+    res.json({ success: true, supportStatus: data.supportStatus || "online" });
+  } catch (e) {
+    res.json({ success: true, supportStatus: "online" });
+  }
 });
 
 // ══════════════════════════════════════════════════
@@ -893,4 +904,4 @@ app.post("/api/admin/get-chats", async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════
-app.listen(PORT, () => console.log(`✅ GameVault v4 aktif: Port ${PORT}`));
+app.listen(PORT, () => console.log(`✅ Gearly v4 aktif: Port ${PORT}`));
