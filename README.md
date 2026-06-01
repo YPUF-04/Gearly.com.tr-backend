@@ -1,13 +1,15 @@
-# Gearly.com.tr - Backend Servis Projesi
+# Gearly.com.tr - Backend Servis ve API Projesi
 
-Bu proje, oyun hesapları ve dijital ürün satışı gerçekleştiren Gearly.com.tr e-ticaret platformunun bulut veri tabanı entegrasyonunu, iş mantığını (business logic) ve arka plan süreçlerini barındıran Backend projesidir.
+Bu proje, Gearly.com.tr e-ticaret platformunun iş mantığını (business logic), bulut veri tabanı mimarisini, sunucu yönetimini ve gerçek zamanlı haberleşme altyapısını barındıran Arka Yüz (Backend) projesidir.
 
-### 🛠️ Kullanılan Teknolojiler & Mimari
-- **Arka Plan Geliştirme (Backend):** Node.js (JavaScript / JSON) mimarisi.
-- **Bulut Veri Tabanı (Database):** Google **Firebase (NoSQL / Realtime Database / Firestore)** kullanılarak kullanıcı ve ürün verilerinin anlık olarak saklanması sağlanmıştır.
-- **Bulut Dağıtım (DevOps):** Bulut tabanlı **Railway.com** altyapısı üzerinden dağıtımı (deployment) yapılarak servislerin canlı ortamda çalışması sağlanmıştır.
+### 🛠️ Kullanılan Teknolojiler & Mimari Yapı
+- **Çalışma Ortamı (Runtime):** Node.js (Express.js Framework).
+- **Bulut Veri Tabanı (Cloud Database):** **Google Firebase Admin SDK & Firestore (NoSQL)** mimarisi. Veriler NoSQL döküman yapısında gerçek zamanlı yönetilmektedir.
+- **Gerçek Zamanlı Haberleşme (Real-Time Push):** **SSE (Server-Sent Events)** teknolojisi kullanılarak kullanıcı ve admin arasında sıfır Firestore okuma maliyetiyle anlık chat akışı kurulmuştur (SSE Push Architecture).
+- **E-Posta & Otomasyon Sistemi:** **IMAP Altyapısı (`imap` ve `mailparser`)** kullanılarak, gelen mailler (Steam Guard 2FA kodları) anlık olarak taranır, regex desenleri ile parse edilir ve kullanıcıya saniyeler içinde dinamik olarak iletilir.
+- **Bulut Dağıtım (Cloud DevOps):** **Railway.com** üzerinde bulut ortamında canlıya alınmıştır. Gelişmiş güvenlik için hassas anahtarlar `process.env` (Environment Variables) üzerinden beslenmektedir.
 
-### ⚙️ Öne Çıkan Özellikler & Fonksiyonlar
-- **Firebase Veri Yönetimi:** JSON formatındaki esnek veri yapıları (NoSQL) sayesinde oyun hesaplarının stok durumları ve fiyatlandırmaları gerçek zamanlı yönetilir.
-- **Node.js & Sunucu Yönetimi:** Sunucu tarafında veri akışını ve iş mantığını kontrol eden asenkron kod yapısı kurulmuştur.
-- **Railway Entegrasyonu:** Kodların Railway.com üzerinde bulut ortamında kesintisiz çalışması ve canlıda kalması sağlanmıştır.
+### ⚙️ Öne Çıkan Güvenlik ve Optimizasyonlar
+- **Performans & Cache Sistemi:** Sık sorgulanan statik veriler ve oyun listeleri için in-memory cache mekanizması uygulanmıştır.
+- **Güvenlik (Rate Limiter):** Kötü niyetli istekleri ve bot saldırılarını engellemek adına bellek içi (in-memory) özel Rate Limiting algoritması entegre edilmiştir.
+- **Veri Güvenliği:** Firebase servis hesabı verileri kod bloğu dışında, çevre değişkenleri üzerinden şifrelenmiş olarak okunur.
