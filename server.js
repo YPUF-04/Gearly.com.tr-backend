@@ -29,7 +29,7 @@ const app = express();
 app.use(cors({ origin: "*", methods: ["GET","POST","PUT","DELETE"], allowedHeaders: ["Content-Type"] }));
 app.use(express.json({ limit: "10mb" }));
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8080;
 
 // ── Basit in-memory cache ──────────────────────────────────────
 const cache = new Map();
