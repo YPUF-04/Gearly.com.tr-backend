@@ -26,8 +26,16 @@ const db = getFirestore(firebaseApp);
 
 // ── Express ────────────────────────────────────────────────────
 const app = express();
-app.use(cors({ origin: "*", methods: ["GET","POST","PUT","DELETE"], allowedHeaders: ["Content-Type"] }));
-app.use(express.json({ limit: "10mb" }));
+app.use(cors({
+  origin: [
+    "https://gearly.com.tr",
+    "https://www.gearly.com.tr",
+    "http://localhost:3000"
+  ],
+  methods: ["GET", "POST", "PUT", "DELETE"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  credentials: true
+}));app.use(express.json({ limit: "10mb" }));
 
 const PORT = process.env.PORT || 8080;
 
