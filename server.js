@@ -10,33 +10,31 @@ const fs = require("fs");
 const { initializeApp, cert } = require("firebase-admin/app");
 const { getFirestore } = require("firebase-admin/firestore");
 
-// ── Firebase init (KUSURSUZ DÜZ METİN YÖNTEMİ) ─────────────────
+// ── Firebase init (KORUMALI DÜZ METİN YÖNTEMİ) ─────────────────
 let firebaseApp;
 try {
-  let serviceAccount;
+  const privateKeyRaw = process.env.FB_PRIVATE_KEY || "";
   
-  // Railway'e eklediğimiz FB_PRIVATE_KEY değişkenini kontrol ediyoruz
-  if (process.env.FB_PRIVATE_KEY && process.env.FB_PRIVATE_KEY.trim() !== "") {
-    serviceAccount = {
-      type: "service_account",
-      project_id: "steam-oto",
-      private_key_id: "3f1a00adc849df4c2d3461efdd43e2183b444b4",
-      // Ters eğik çizgileri gerçek satır sonlarına dönüştürüyoruz
-      private_key: process.env.FB_PRIVATE_KEY.replace(/\\n/g, '\n'),
-      client_email: "firebase-adminsdk-fbsvc@steam-oto.iam.gserviceaccount.com"
-    };
-    console.log("🔒 Firebase ayarları Railway Variables üzerinden başarıyla yüklendi.");
-  } else {
-    // Eğer env değişkeni yoksa yerel dosyaya bak (Geriye dönük uyumluluk)
-    serviceAccount = require("./service-account.json");
+  if (!privateKeyRaw) {
+    throw new Error("Railway panelinde 'FB_PRIVATE_KEY' degiskeni bulunamadi veya ici bos!");
   }
-  
+
+  const serviceAccount = {
+    type: "service_account",
+    project_id: "steam-oto",
+    private_key_id: "3f1a00adc849df4c2d3461efdd43e2183b444b4",
+    private_key: privateKeyRaw.replace(/\\n/g, '\n'),
+    client_email: "firebase-adminsdk-fbsvc@steam-oto.iam.gserviceaccount.com"
+  };
+
+  console.log("🔒 Firebase ayarlari Railway Variables uzerinden basariyla yuklendi.");
   firebaseApp = initializeApp({ credential: cert(serviceAccount) });
 } catch (e) {
-  console.error("❌ Firebase başlatılamadı:", e.message);
+  console.error("❌ Firebase baslatilamadi:", e.message);
   process.exit(1);
 }
 const db = getFirestore(firebaseApp);
+
 // ── Express ────────────────────────────────────────────────────
 const app = express();
 app.use(cors({
@@ -141,7 +139,6 @@ app.post("/api/redeem-code", async (req, res) => {
   const cd = cSnap.data();
   if (cd.redeemedBy) return res.json({ success: false, message: "Bu kod daha önce kullanıldı." });
 
-  // ── Exclusive kod: direkt oyun ver, bakiye değiştirme ──
   if (cd.exclusive && cd.exclusiveGameId) {
     const gSnap = await C.games().doc(cd.exclusiveGameId).get();
     if (!gSnap.exists) return res.json({ success: false, message: "Bağlı oyun bulunamadı." });
@@ -181,7 +178,6 @@ app.post("/api/redeem-code", async (req, res) => {
     });
   }
 
-  // ── Normal kod: bakiye ekle ──
   const newBal = (uSnap.data().balance || 0) + (cd.balance || 1);
   await Promise.all([
     C.users().doc(key).update({ balance: newBal }),
@@ -221,10 +217,9 @@ app.get("/api/popular-games", async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════
-// SATIN ALMA
+// KOD İLE SATIN ALMA
 // ══════════════════════════════════════════════════
 
-// Kodu doğrula (oyun seçmeden önce)
 app.post("/api/verify-code", async (req, res) => {
   const { code } = req.body;
   if (!code) return res.json({ success: false, message: "Kod gerekli." });
@@ -240,7 +235,6 @@ app.post("/api/verify-code", async (req, res) => {
   return res.json({ success: true, type: "normal", balance: cd.balance || 1 });
 });
 
-// Kod + oyun ile satın al
 app.post("/api/purchase-with-code", async (req, res) => {
   const { code, gameId } = req.body;
   if (!code || !gameId) return res.json({ success: false, message: "Kod ve oyun ID gerekli." });
@@ -277,7 +271,6 @@ app.post("/api/purchase-with-code", async (req, res) => {
   res.json({ success: true, purchaseId: pid, gameName: g.name, steamUser: g.steamUser, steamPass: g.steamPass, requiresCode: g.requiresCode !== false });
 });
 
-// Kod ile satın alınan oyunu görüntüle
 app.post("/api/my-purchase-by-code", async (req, res) => {
   const { code } = req.body;
   if (!code) return res.json({ success: false, message: "Kod gerekli." });
@@ -778,7 +771,7 @@ app.post("/api/admin/delete-review", async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════
-// CANLI DESTEK CHAT — SSE Push (Polling YOK)
+// CANLI DESTEK CHAT — SSE Push
 // ══════════════════════════════════════════════════
 
 const sseUsers  = new Map();
