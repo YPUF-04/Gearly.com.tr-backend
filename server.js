@@ -10,22 +10,27 @@ const fs = require("fs");
 const { initializeApp, cert } = require("firebase-admin/app");
 const { getFirestore } = require("firebase-admin/firestore");
 
-// ── Firebase init (DÜZ METİN YÖNTEMİ) ──────────────────────────
+// ── Firebase init (KUSURSUZ DÜZ METİN YÖNTEMİ) ─────────────────
 let firebaseApp;
 try {
   let serviceAccount;
-  if (process.env.FB_PRIVATE_KEY) {
-    // Şifreyi parçalar halinde env'den güvenle topluyoruz
+  
+  // Railway'e eklediğimiz FB_PRIVATE_KEY değişkenini kontrol ediyoruz
+  if (process.env.FB_PRIVATE_KEY && process.env.FB_PRIVATE_KEY.trim() !== "") {
     serviceAccount = {
       type: "service_account",
       project_id: "steam-oto",
       private_key_id: "3f1a00adc849df4c2d3461efdd43e2183b444b4",
+      // Ters eğik çizgileri gerçek satır sonlarına dönüştürüyoruz
       private_key: process.env.FB_PRIVATE_KEY.replace(/\\n/g, '\n'),
       client_email: "firebase-adminsdk-fbsvc@steam-oto.iam.gserviceaccount.com"
     };
+    console.log("🔒 Firebase ayarları Railway Variables üzerinden başarıyla yüklendi.");
   } else {
+    // Eğer env değişkeni yoksa yerel dosyaya bak (Geriye dönük uyumluluk)
     serviceAccount = require("./service-account.json");
   }
+  
   firebaseApp = initializeApp({ credential: cert(serviceAccount) });
 } catch (e) {
   console.error("❌ Firebase başlatılamadı:", e.message);
