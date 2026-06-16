@@ -10,16 +10,20 @@ const fs = require("fs");
 const { initializeApp, cert } = require("firebase-admin/app");
 const { getFirestore } = require("firebase-admin/firestore");
 
-// ── Firebase init ──────────────────────────────────────────────
+// ── Firebase init (DÜZELTİLDİ) ─────────────────────────────────
 let firebaseApp;
 try {
-  const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT
-    ? JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)
-    : require("./service-account.json");
+  let serviceAccount;
+  if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+    // Railway panelinden gelen gizli anahtardaki \n (satır sonu) karakterlerini otomatik onarır
+    const cleanedKey = process.env.FIREBASE_SERVICE_ACCOUNT.replace(/\\n/g, '\n');
+    serviceAccount = JSON.parse(cleanedKey);
+  } else {
+    serviceAccount = require("./service-account.json");
+  }
   firebaseApp = initializeApp({ credential: cert(serviceAccount) });
 } catch (e) {
   console.error("❌ Firebase başlatılamadı:", e.message);
-  console.error("   FIREBASE_SERVICE_ACCOUNT env var veya service-account.json gerekli.");
   process.exit(1);
 }
 const db = getFirestore(firebaseApp);
@@ -35,7 +39,8 @@ app.use(cors({
   methods: ["GET", "POST", "PUT", "DELETE"],
   allowedHeaders: ["Content-Type", "Authorization"],
   credentials: true
-}));app.use(express.json({ limit: "10mb" }));
+}));
+app.use(express.json({ limit: "10mb" }));
 
 const PORT = process.env.PORT || 8080;
 
@@ -210,13 +215,6 @@ app.get("/api/popular-games", async (req, res) => {
 // SATIN ALMA
 // ══════════════════════════════════════════════════
 
-// ══════════════════════════════════════════════════
-// KOD İLE SATIN ALMA (anonim — kullanıcı hesabı yok)
-// 1. Kod kontrol edilir (normal bakiye kodu)
-// 2. Oyun seçilir
-// 3. Kod kullanılır → purchase oluşturulur
-// ══════════════════════════════════════════════════
-
 // Kodu doğrula (oyun seçmeden önce)
 app.post("/api/verify-code", async (req, res) => {
   const { code } = req.body;
@@ -226,7 +224,6 @@ app.post("/api/verify-code", async (req, res) => {
   const cd = cSnap.data();
   if (cd.redeemedBy) return res.json({ success: false, message: "Bu kod zaten kullanılmış." });
   if (cd.exclusive) {
-    // Exclusive kod: birden fazla oyun seçeneği olabilir
     const gameIds = Array.isArray(cd.exclusiveGameIds) ? cd.exclusiveGameIds : (cd.exclusiveGameId ? [cd.exclusiveGameId] : []);
     const gameNames = Array.isArray(cd.exclusiveGameNames) ? cd.exclusiveGameNames : (cd.exclusiveGameName ? [cd.exclusiveGameName] : []);
     return res.json({ success: true, type: "exclusive", exclusiveGameIds: gameIds, exclusiveGameNames: gameNames });
@@ -247,13 +244,11 @@ app.post("/api/purchase-with-code", async (req, res) => {
   const cd = cSnap.data(), g = gSnap.data();
   if (cd.redeemedBy) return res.json({ success: false, message: "Bu kod zaten kullanılmış." });
   if (cd.exclusive) {
-    // Exclusive kod: seçilen oyun bu kodun geçerli oyunları arasında mı?
     const allowedIds = Array.isArray(cd.exclusiveGameIds) ? cd.exclusiveGameIds : (cd.exclusiveGameId ? [cd.exclusiveGameId] : []);
     if (!allowedIds.includes(gameId)) {
       return res.json({ success: false, message: "Bu kod seçtiğiniz oyun için geçerli değil." });
     }
   } else if (g.exclusive) {
-    // Normal kod ile exclusive oyun alınamaz
     return res.json({ success: false, message: "Bu özel oyun için özel kod gereklidir." });
   }
   const pid = Date.now().toString();
@@ -281,7 +276,6 @@ app.post("/api/my-purchase-by-code", async (req, res) => {
   if (!cSnap.exists) return res.json({ success: false, message: "Geçersiz kod." });
   const cd = cSnap.data();
   if (!cd.redeemedBy) return res.json({ success: false, message: "Bu kod henüz kullanılmamış." });
-  // purchases koleksiyonunda bu kodu bul
   const pSnap = await C.purchases().where("code", "==", code.toUpperCase()).limit(1).get();
   if (pSnap.empty) return res.json({ success: false, message: "Satın alım bulunamadı." });
   const p = pSnap.docs[0].data();
@@ -297,12 +291,10 @@ app.post("/api/my-purchase-by-code", async (req, res) => {
   });
 });
 
-// Eski purchase endpoint — artık kullanılmıyor, compat için bırakıldı
 app.post("/api/purchase", async (req, res) => {
   res.json({ success: false, message: "Bu endpoint artık kullanılmıyor. /api/purchase-with-code kullanın." });
 });
 
-// my-purchases — artık kod bazlı sistem kullanıldığı için /api/my-purchase-by-code endpoint'i kullanılıyor
 app.get("/api/my-purchases", async (req, res) => {
   res.json({ success: true, purchases: [] });
 });
@@ -310,7 +302,6 @@ app.get("/api/my-purchases", async (req, res) => {
 app.get("/api/recent-purchases", async (req, res) => {
   const cached = cacheGet("recent-purchases");
   if (cached) return res.json({ success: true, purchases: cached });
-  // Sadece son 50 kaydı çek — tüm koleksiyonu okuma
   const snap = await C.purchases().orderBy("purchasedAt", "desc").limit(50).get();
   const purchases = snap.docs
     .map(d => { const p = d.data(); return { username: p.username ? p.username.substring(0,3)+"***" : "???", gameName: p.gameName, gameEmoji: p.gameEmoji || "🎮", purchasedAt: p.purchasedAt }; })
@@ -328,7 +319,6 @@ app.post("/api/get-steam-code", async (req, res) => {
   const snap = await C.purchases().doc(purchaseId).get();
   if (!snap.exists) return res.json({ success: false, message: "Satın alma bulunamadı." });
   const p = snap.data();
-  // steamCodeRequests negatifse admin bonus hak vermiş (örn: -3 = 8 hak kapasitesi)
   const maxRequests = Math.max(5, 5 + Math.abs(Math.min(0, p.steamCodeRequests || 0)));
   if ((p.steamCodeRequests || 0) >= maxRequests)
     return res.json({ success: false, message: `Maksimum doğrulama talebi aşıldı (${maxRequests}/${maxRequests}).`, limitReached: true });
@@ -384,7 +374,6 @@ app.post("/api/admin/add-game", async (req, res) => {
   const { adminKey, gameName, steamUser, steamPass, gmailUser, gmailPass, platform, price, emoji, imageUrl, accountType } = req.body;
   if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
   const id = Date.now().toString();
-  // Steam Guard: default true — sadece açıkça 'false' gönderilirse kapalı sayılır
   const requiresCodeVal = req.body.requiresCode !== "false";
   const gd = {
     name: gameName,
@@ -412,7 +401,6 @@ app.post("/api/admin/edit-game", async (req, res) => {
   const snap = await C.games().doc(gameId).get();
   if (!snap.exists) return res.json({ success: false, message: "Oyun bulunamadı." });
   const existing = snap.data();
-  // FIX: boş string gelirse mevcut değeri koru (kaydet butonu sorunu)
   const upd = {
     name:        gameName    || existing.name,
     platform:    platform    || existing.platform,
@@ -425,7 +413,6 @@ app.post("/api/admin/edit-game", async (req, res) => {
     accountType: accountType || existing.accountType,
     requiresCode: req.body.requiresCode !== "false",
     image:       imageUrl !== undefined && imageUrl !== "" ? imageUrl : (existing.image || null),
-    // exclusive alanları koru — sadece toggle endpoint'ten değişsin
     exclusive:       existing.exclusive       || false,
     exclusiveGameId: existing.exclusiveGameId || null,
   };
@@ -505,7 +492,6 @@ app.post("/api/admin/get-purchases", async (req, res) => {
   res.json({ success: true, purchases });
 });
 
-// Admin — satın alım satırından doğrudan hak iade et
 app.post("/api/admin/grant-requests", async (req, res) => {
   const { adminKey, purchaseId, amount } = req.body;
   if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
@@ -514,10 +500,8 @@ app.post("/api/admin/grant-requests", async (req, res) => {
   if (!snap.exists) return res.json({ success: false, message: "Satın alma bulunamadı." });
   const cur = snap.data().steamCodeRequests || 0;
   const add = parseInt(amount) || 3;
-  // Negatife izin ver: -3 = 8 hak kapasitesi (5 + 3 bonus)
   const newVal = cur - add;
   await ref.update({ steamCodeRequests: newVal });
-  // Kullanıcıya gösterilecek kalan hak = 5 - newVal (negatifse 5+|newVal|)
   const remaining = 5 - newVal;
   res.json({ success: true, newRequests: newVal, remaining });
 });
@@ -567,7 +551,7 @@ app.post("/api/admin/update-settings", async (req, res) => {
   const upd = {};
   if (rating !== undefined) upd.rating = parseFloat(rating);
   if (serverStatus !== undefined) upd.serverStatus = serverStatus;
-  if (supportStatus !== undefined) upd.supportStatus = supportStatus; // "online" | "30" | "60" vb.
+  if (supportStatus !== undefined) upd.supportStatus = supportStatus;
   await C.settings().set(upd, { merge: true });
   res.json({ success: true });
 });
@@ -584,7 +568,6 @@ app.get("/api/settings", async (req, res) => {
 
 // ══════════════════════════════════════════════════
 // STEAM KODU IMAP — GELİŞTİRİLMİŞ
-// Son 30 dakika, tüm mailler (okunmuş/okunmamış), en yeni kodu döndür
 // ══════════════════════════════════════════════════
 
 function fetchSteamCodeFromGmail(user, pass) {
@@ -611,12 +594,10 @@ function fetchSteamCodeFromGmail(user, pass) {
       imap.openBox("INBOX", false, (err) => {
         if (err) return done(err);
 
-        // Son 30 dakika — sadece FROM filtresi (okunmuş/okunmamış fark etmez)
         const since = new Date(Date.now() - 30 * 60 * 1000);
         imap.search([["FROM", "noreply@steampowered.com"], ["SINCE", since]], (sErr, results) => {
           if (sErr || !results || !results.length) return done(null, null);
 
-          // En yeni 5 mail (results küçükten büyüğe sıralı — son 5 al)
           const toFetch = results.slice(-5);
           const f = imap.fetch(toFetch, { bodies: "", markSeen: false });
 
@@ -645,7 +626,6 @@ function fetchSteamCodeFromGmail(user, pass) {
           f.once("error", () => { fetchDone = true; tryResolve(); });
           f.once("end", () => {
             fetchDone = true;
-            // simpleParser async olduğu için 3sn ekstra bekle
             setTimeout(() => { if (!settled) done(null, foundCode); }, 3000);
           });
         });
@@ -657,7 +637,6 @@ function fetchSteamCodeFromGmail(user, pass) {
 }
 
 function extractSteamCode(text) {
-  // Kesin Steam Guard pattern'leri
   const strictPatterns = [
     /Steam Guard Mobile Authenticator[^:]*?:\s*([A-Z0-9]{5})\b/i,
     /Steam Guard[^:]*?:\s*([A-Z0-9]{5})\b/i,
@@ -685,7 +664,6 @@ function extractSteamCode(text) {
     const m = text.match(pat);
     if (m && m[1] && !skip.has(m[1].toUpperCase())) return m[1].toUpperCase();
   }
-  // Son çare: rakam içeren 5 karakter blok
   const htmlMatch = text.match(/>([A-HJ-NP-Z2-9]{5})</);
   if (htmlMatch && htmlMatch[1] && !skip.has(htmlMatch[1]) && /[0-9]/.test(htmlMatch[1])) {
     return htmlMatch[1];
@@ -708,10 +686,8 @@ app.post("/api/admin/toggle-popular", async (req, res) => {
   res.json({ success: true });
 });
 
-
 // ══════════════════════════════════════════════════
 // ADMIN — EXCLUSIVE OYUN TOGGLE
-// Özel oyun: sadece özel kodla alınabilir, normal bakiye çalışmaz
 // ══════════════════════════════════════════════════
 
 app.post("/api/admin/toggle-exclusive", async (req, res) => {
@@ -725,23 +701,20 @@ app.post("/api/admin/toggle-exclusive", async (req, res) => {
   res.json({ success: true });
 });
 
-// Exclusive kod oluştur — birden fazla oyun seçeneği destekli
 app.post("/api/admin/add-exclusive-code", async (req, res) => {
   const { adminKey, code, gameId, gameIds } = req.body;
   if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
   if (!code) return res.json({ success: false, message: "Kod zorunlu." });
-  // gameIds dizisi veya tekil gameId
   const ids = Array.isArray(gameIds) && gameIds.length > 0 ? gameIds : (gameId ? [gameId] : []);
   if (!ids.length) return res.json({ success: false, message: "En az bir oyun seçilmeli." });
-  // Oyun isimlerini çek
   const snaps = await Promise.all(ids.map(id => C.games().doc(id).get()));
   const names = snaps.map((s, i) => s.exists ? s.data().name : ids[i]);
   await C.codes().doc(code.toUpperCase()).set({
     balance: 0,
     exclusive: true,
-    exclusiveGameId: ids[0],        // geriye dönük uyumluluk
+    exclusiveGameId: ids[0],
     exclusiveGameName: names[0],
-    exclusiveGameIds: ids,           // yeni: çoklu oyun
+    exclusiveGameIds: ids,
     exclusiveGameNames: names,
     redeemedBy: null,
     redeemedAt: null,
@@ -796,16 +769,11 @@ app.post("/api/admin/delete-review", async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════
-// ══════════════════════════════════════════════════
 // CANLI DESTEK CHAT — SSE Push (Polling YOK)
-// Kullanıcı mesaj atınca → admin SSE'ye push
-// Admin mesaj atınca → kullanıcı SSE'ye push
-// Boşta iken Firestore okuma = 0
 // ══════════════════════════════════════════════════
 
-// SSE bağlantıları — kullanıcı ve admin ayrı
-const sseUsers  = new Map(); // username → kullanıcı bağlantısı
-const sseAdmins = new Map(); // username → admin bağlantısı
+const sseUsers  = new Map();
+const sseAdmins = new Map();
 
 function sseSetup(res, map, key) {
   res.set({
@@ -816,7 +784,6 @@ function sseSetup(res, map, key) {
   });
   res.flushHeaders();
   map.set(key, res);
-  // 20sn'de bir keep-alive gönder (Railway proxy timeout'u önler)
   const ka = setInterval(() => {
     if (res.writableEnded) { clearInterval(ka); map.delete(key); return; }
     res.write(": ping\n\n");
@@ -831,7 +798,6 @@ function ssePush(map, key, data) {
   }
 }
 
-// Kullanıcı SSE — admin mesajlarını push alır
 app.get("/api/chat/subscribe", (req, res) => {
   const { username } = req.query;
   if (!username) return res.status(400).end();
@@ -840,7 +806,6 @@ app.get("/api/chat/subscribe", (req, res) => {
   req.on("close", () => { sseUsers.delete(id); clearInterval(ka); });
 });
 
-// Admin SSE — kullanıcı mesajlarını push alır
 app.get("/api/chat/subscribe-admin", (req, res) => {
   const { username, adminKey } = req.query;
   if (!username || adminKey !== process.env.ADMIN_KEY) return res.status(403).end();
@@ -849,7 +814,6 @@ app.get("/api/chat/subscribe-admin", (req, res) => {
   req.on("close", () => { sseAdmins.delete(id); clearInterval(ka); });
 });
 
-// Mesaj gönder — her iki tarafa push
 app.post("/api/chat/send", async (req, res) => {
   const { username, message, isAdmin, adminKey } = req.body;
   if (!username || !message) return res.json({ success: false, message: "Eksik alan." });
@@ -862,7 +826,6 @@ app.post("/api/chat/send", async (req, res) => {
   await C.chat().doc(chatId).collection("messages").add({
     text: message, sender, createdAt: now, read: false
   });
-  // get() kaldırıldı — FieldValue.increment ile tek yazma
   const { FieldValue } = require("firebase-admin/firestore");
   await C.chat().doc(chatId).set({
     username, lastMessage: message, lastAt: now,
@@ -873,17 +836,14 @@ app.post("/api/chat/send", async (req, res) => {
   const msgObj = { text: message, sender, createdAt: now };
 
   if (isAdmin) {
-    // Admin yazdı → kullanıcıya push
     ssePush(sseUsers, chatId, msgObj);
   } else {
-    // Kullanıcı yazdı → admin'e push
     ssePush(sseAdmins, chatId, msgObj);
   }
 
   res.json({ success: true, lastAt: now });
 });
 
-// Mesajları getir (sayfa açılınca 1 kez)
 app.get("/api/chat/messages", async (req, res) => {
   const { username, adminKey } = req.query;
   if (!username) return res.json({ success: false });
@@ -901,7 +861,6 @@ app.get("/api/chat/messages", async (req, res) => {
   res.json({ success: true, messages });
 });
 
-// Tüm chatları listele (admin)
 app.post("/api/admin/get-chats", async (req, res) => {
   const { adminKey } = req.body;
   if (adminKey !== process.env.ADMIN_KEY) return res.json({ success: false, message: "Yetkisiz." });
