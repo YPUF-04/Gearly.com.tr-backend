@@ -10,14 +10,19 @@ const fs = require("fs");
 const { initializeApp, cert } = require("firebase-admin/app");
 const { getFirestore } = require("firebase-admin/firestore");
 
-// ── Firebase init (DÜZELTİLDİ) ─────────────────────────────────
+// ── Firebase init (KÖKTEN ÇÖZÜM) ───────────────────────────────
 let firebaseApp;
 try {
   let serviceAccount;
   if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-    // Railway panelinden gelen gizli anahtardaki \n (satır sonu) karakterlerini otomatik onarır
-    const cleanedKey = process.env.FIREBASE_SERVICE_ACCOUNT.replace(/\\n/g, '\n');
-    serviceAccount = JSON.parse(cleanedKey);
+    let rawData = process.env.FIREBASE_SERVICE_ACCOUNT.trim();
+    // Eğer base64 ile şifrelenmişse önce onu çöz
+    if (!rawData.startsWith('{')) {
+      rawData = Buffer.from(rawData, 'base64').toString('utf8');
+    }
+    // İçindeki olası gizli satır kaçışlarını temizle ve parse et
+    rawData = rawData.replace(/\\n/g, '\n');
+    serviceAccount = JSON.parse(rawData);
   } else {
     serviceAccount = require("./service-account.json");
   }
