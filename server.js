@@ -10,19 +10,19 @@ const fs = require("fs");
 const { initializeApp, cert } = require("firebase-admin/app");
 const { getFirestore } = require("firebase-admin/firestore");
 
-// ── Firebase init (KÖKTEN ÇÖZÜM) ───────────────────────────────
+// ── Firebase init (DÜZ METİN YÖNTEMİ) ──────────────────────────
 let firebaseApp;
 try {
   let serviceAccount;
-  if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-    let rawData = process.env.FIREBASE_SERVICE_ACCOUNT.trim();
-    // Eğer base64 ile şifrelenmişse önce onu çöz
-    if (!rawData.startsWith('{')) {
-      rawData = Buffer.from(rawData, 'base64').toString('utf8');
-    }
-    // İçindeki olası gizli satır kaçışlarını temizle ve parse et
-    rawData = rawData.replace(/\\n/g, '\n');
-    serviceAccount = JSON.parse(rawData);
+  if (process.env.FB_PRIVATE_KEY) {
+    // Şifreyi parçalar halinde env'den güvenle topluyoruz
+    serviceAccount = {
+      type: "service_account",
+      project_id: "steam-oto",
+      private_key_id: "3f1a00adc849df4c2d3461efdd43e2183b444b4",
+      private_key: process.env.FB_PRIVATE_KEY.replace(/\\n/g, '\n'),
+      client_email: "firebase-adminsdk-fbsvc@steam-oto.iam.gserviceaccount.com"
+    };
   } else {
     serviceAccount = require("./service-account.json");
   }
@@ -32,7 +32,6 @@ try {
   process.exit(1);
 }
 const db = getFirestore(firebaseApp);
-
 // ── Express ────────────────────────────────────────────────────
 const app = express();
 app.use(cors({
